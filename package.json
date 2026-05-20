@@ -1,0 +1,23 @@
+{
+  "name": "create-pet-skill",
+  "version": "1.0.0",
+  "description": "Claude Code skill for generating Q-style desktop pets from reference images",
+  "main": "main.js",
+  "author": "DeskToy",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit --skipLibCheck --moduleResolution node --module esnext --target es2022 --allowSyntheticDefaultImports --esModuleInterop scripts/export-pet.ts scripts/generate-sprite.ts scripts/repack-sprite-safe.ts",
+    "start": "unset ELECTRON_RUN_AS_NODE && electron ."
+  },
+  "dependencies": {
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "dmg-license": "^1.0.11",
+    "electron": "^28.3.3",
+    "electron-builder": "^25.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
