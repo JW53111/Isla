@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import sharp from 'sharp';
@@ -203,7 +204,7 @@ async function generateIconAssets(referencePath: string, assetsDir: string) {
     await execFileAsync('iconutil', ['-c', 'icns', iconsetDir, '-o', path.join(assetsDir, 'icon.icns')]);
     await fs.rm(iconsetDir, { recursive: true, force: true });
   } catch {
-    await copyIfExists(path.join(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), 'assets', 'icon.icns'), path.join(assetsDir, 'icon.icns'));
+    await copyIfExists(path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'assets', 'icon.icns'), path.join(assetsDir, 'icon.icns'));
   }
 }
 
@@ -270,7 +271,7 @@ async function main() {
     process.exit(1);
   }
 
-  const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const actionsPath = path.join(sessionDir, 'actions.json');
   const referencePath = path.join(sessionDir, 'reference.png');
   const spritesDir = path.join(sessionDir, 'sprites');

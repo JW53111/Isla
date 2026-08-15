@@ -23,6 +23,36 @@ function isGreenFringe(r: number, g: number, b: number, a: number) {
   return g > 120 && g > maxOther * 1.25 && g - maxOther > 35;
 }
 
+function applyFringeCleanup(raw: Buffer, w: number, h: number) {
+  const components = 4;
+  const out = Buffer.alloc(raw.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * components;
+      const r = raw[idx];
+      const g = raw[idx + 1];
+      const b = raw[idx + 2];
+      const a = raw[idx + 3];
+
+      // semi-transparent green-dominant pixels are always green-screen transition;
+      // they reappear after scaling, so clear them regardless of the strict fringe test
+      const semiGreen = a < 128 && g > 120 && g > r && g > b;
+      if (semiGreen || isGreenFringe(r, g, b, a)) {
+        out[idx] = 0;
+        out[idx + 1] = 255;
+        out[idx + 2] = 0;
+        out[idx + 3] = 0;
+      } else {
+        out[idx] = r;
+        out[idx + 1] = g;
+        out[idx + 2] = b;
+        out[idx + 3] = 255;
+      }
+    }
+  }
+  return out;
+}
+
 async function createCleanFramePng(
   raw: Buffer,
   sourceWidth: number,
@@ -37,29 +67,65 @@ async function createCleanFramePng(
     for (let x = 0; x < extractWidth; x++) {
       const srcIdx = ((box.minY + y) * sourceWidth + box.minX + x) * components;
       const destIdx = (y * extractWidth + x) * components;
-      const r = raw[srcIdx];
-      const g = raw[srcIdx + 1];
-      const b = raw[srcIdx + 2];
-      const a = raw[srcIdx + 3];
-
-      if (isGreenFringe(r, g, b, a)) {
-        frame[destIdx] = 0;
-        frame[destIdx + 1] = 255;
-        frame[destIdx + 2] = 0;
-        frame[destIdx + 3] = 0;
-      } else {
-        frame[destIdx] = r;
-        frame[destIdx + 1] = g;
-        frame[destIdx + 2] = b;
-        frame[destIdx + 3] = 255;
-      }
+      frame[destIdx] = raw[srcIdx];
+      frame[destIdx + 1] = raw[srcIdx + 1];
+      frame[destIdx + 2] = raw[srcIdx + 2];
+      frame[destIdx + 3] = raw[srcIdx + 3];
     }
   }
 
-  return sharp(frame, { raw: { width: extractWidth, height: extractHeight, channels: 4 } }).png().toBuffer();
+  const cleaned = applyFringeCleanup(frame, extractWidth, extractHeight);
+  return sharp(cleaned, { raw: { width: extractWidth, height: extractHeight, channels: 4 } }).png().toBuffer();
 }
 
-async function safeRepack(inputBuffer: Buffer, frames: number, padding: number) {
+function removeSpecks(raw: Buffer, w: number, h: number) {
+  const components = 4;
+  const contentCols: number[] = [];
+  for (let x = 0; x < w; x++) {
+    let count = 0;
+    for (let y = 0; y < h; y++) {
+      const idx = (y * w + x) * components;
+      if (raw[idx + 3] > 10 && !isGreen(raw[idx], raw[idx + 1], raw[idx + 2], raw[idx + 3])) count++;
+    }
+    if (count > 2) contentCols.push(x);
+  }
+
+  const clusters: Array<{ start: number; end: number }> = [];
+  for (const x of contentCols) {
+    const last = clusters[clusters.length - 1];
+    if (!last || x - last.end > 8) clusters.push({ start: x, end: x });
+    else last.end = x;
+  }
+  if (clusters.length <= 1) return;
+
+  const heights = clusters.map((c) => {
+    let minY = h;
+    let maxY = -1;
+    for (let x = c.start; x <= c.end; x++) {
+      for (let y = 0; y < h; y++) {
+        const idx = (y * w + x) * components;
+        if (raw[idx + 3] > 10 && !isGreen(raw[idx], raw[idx + 1], raw[idx + 2], raw[idx + 3])) {
+          minY = Math.min(minY, y);
+          maxY = Math.max(maxY, y);
+        }
+      }
+    }
+    return maxY - minY + 1;
+  });
+  const maxHeight = Math.max(...heights);
+
+  clusters.forEach((c, i) => {
+    if (heights[i] >= maxHeight * 0.5) return;
+    for (let x = c.start; x <= c.end; x++) {
+      for (let y = 0; y < h; y++) {
+        const idx = (y * w + x) * components;
+        raw[idx + 3] = 0;
+      }
+    }
+  });
+}
+
+async function safeRepack(inputBuffer: Buffer, frames: number, padding: number, targetHeight: number) {
   const image = sharp(inputBuffer).ensureAlpha();
   const metadata = await image.metadata();
   const width = metadata.width;
@@ -126,8 +192,9 @@ async function safeRepack(inputBuffer: Buffer, frames: number, padding: number) 
 
   const contentWidth = Math.max(...frameBoxes.map((box) => box.maxX - box.minX + 1));
   const contentHeight = Math.max(...frameBoxes.map((box) => box.maxY - box.minY + 1));
-  const frameWidth = contentWidth + padding * 2;
-  const frameHeight = contentHeight + padding * 2;
+  const scale = targetHeight > 0 ? targetHeight / contentHeight : 1;
+  const frameWidth = Math.round(contentWidth * scale) + padding * 2;
+  const frameHeight = Math.round(contentHeight * scale) + padding * 2;
   const outputWidth = frameWidth * frames;
   const composites: sharp.OverlayOptions[] = [];
 
@@ -135,9 +202,26 @@ async function safeRepack(inputBuffer: Buffer, frames: number, padding: number) 
     const box = frameBoxes[i];
     const extractWidth = box.maxX - box.minX + 1;
     const extractHeight = box.maxY - box.minY + 1;
-    const frameBuffer = await createCleanFramePng(raw, width, box);
-    const left = i * frameWidth + Math.floor((frameWidth - extractWidth) / 2);
-    const top = Math.floor((frameHeight - extractHeight) / 2);
+    let frameBuffer = await createCleanFramePng(raw, width, box);
+    let placeWidth = extractWidth;
+    let placeHeight = extractHeight;
+    if (targetHeight > 0) {
+      placeWidth = Math.round(extractWidth * scale);
+      placeHeight = Math.round(extractHeight * scale);
+      frameBuffer = await sharp(frameBuffer)
+        .resize({ width: placeWidth, height: placeHeight, fit: 'fill', kernel: 'lanczos3' })
+        .png()
+        .toBuffer();
+      // scaling re-introduces semi-transparent blend pixels at edges; clean them again
+      const scaledRaw = await sharp(frameBuffer).raw().toBuffer();
+      const cleaned = applyFringeCleanup(scaledRaw, placeWidth, placeHeight);
+      removeSpecks(cleaned, placeWidth, placeHeight);
+      frameBuffer = await sharp(cleaned, { raw: { width: placeWidth, height: placeHeight, channels: 4 } })
+        .png()
+        .toBuffer();
+    }
+    const left = i * frameWidth + Math.floor((frameWidth - placeWidth) / 2);
+    const top = Math.floor((frameHeight - placeHeight) / 2);
     composites.push({ input: frameBuffer, left, top });
   }
 
@@ -162,6 +246,7 @@ async function main() {
   const outputPath = args['output'];
   const frames = parseInt(args['frames'], 10);
   const padding = parseInt(args['padding'] || '24', 10);
+  const targetHeight = parseInt(args['target-height'] || '0', 10);
 
   if (!inputPath || !outputPath || !frames) {
     console.error(JSON.stringify({
@@ -172,7 +257,7 @@ async function main() {
   }
 
   const inputBuffer = await fs.readFile(inputPath);
-  const { buffer, frameWidth, frameHeight, boxes } = await safeRepack(inputBuffer, frames, padding);
+  const { buffer, frameWidth, frameHeight, boxes } = await safeRepack(inputBuffer, frames, padding, targetHeight);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, buffer);
   console.log(JSON.stringify({ success: true, frameWidth, frameHeight, mode: 'safe-foreground-repack', padding, boxes }));

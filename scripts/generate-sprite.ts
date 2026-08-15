@@ -45,9 +45,26 @@ async function main() {
   }
 
   const prompt = await fs.readFile(promptFile, 'utf-8');
+  const apiStyle = (process.env.IMAGE_API_STYLE || 'openai').toLowerCase();
 
   let res: Response;
-  if (referenceImage) {
+  if (apiStyle === 'agnes') {
+    // Agnes: reference image must go into extra_body.image as a data URI / URL array,
+    // posted to /images/generations. Top-level image is silently ignored (falls back to t2i).
+    const body: Record<string, unknown> = { model, prompt, size };
+    const extraBody: Record<string, unknown> = { response_format: 'url' };
+    if (referenceImage) {
+      const imageBuffer = await fs.readFile(referenceImage);
+      const dataUri = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+      extraBody.image = [dataUri];
+    }
+    body.extra_body = extraBody;
+    res = await fetch(`${baseUrl}/images/generations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
+  } else if (referenceImage) {
     const imageBuffer = await fs.readFile(referenceImage);
     const form = new FormData();
     form.append('model', model);

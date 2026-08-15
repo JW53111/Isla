@@ -1,8 +1,8 @@
-# 桌宠生成器
+# Isla-Deskpet
 
-一个基于 **Claude Code Skill** 的对话式桌宠生成工具。你只需要准备一张人物参考图，就可以跟着 Claude 的中文提示生成 Q 版动漫桌宠动作、精灵图，并打包成 macOS / Windows 桌面应用。
+请注意这是本人第一次尝试 vibe coding 写的小玩意儿，所以欢迎同好帮助维护或者更新新的功能。
 
-当前主流程是 Claude Code 里的 `/create-pet` skill。
+一个基于 [**Claude Code Skill**](https://github.com/CyanWong-pm/create-pet-skill) 的对话式桌宠生成工具。你只需要准备一张人物参考图，就可以跟着 Claude 的中文提示生成 Q 版动漫桌宠动作、精灵图，并打包成 macOS / Windows 桌面应用。
 
 ---
 
@@ -15,11 +15,65 @@
 
 ---
 
-## 你需要准备什么？
+## 🎉 仓库里已经有一只桌宠：isla
 
-### 1. 本地环境
+这个仓库内置了一只生成好的桌宠 **isla**（艾拉：银白长发、红瞳、白色制服 + 红色胸结的 Q 版形象），共 **10 个动作**：
 
-需要先安装：
+| 动作 id | 动作名 | 触发方式 |
+|---|---|---|
+| idle-buddy | 陪班待机 | 启动后默认动作 |
+| cheer-up | 傲娇打气 | 右键切换 |
+| drink-water | 喝水提醒 | 右键切换 |
+| rest-reminder | 休息提醒 | 右键切换 |
+| off-work | 下班提醒 | 右键切换 |
+| poke-react | 戳一戳撒娇 | 右键切换 |
+| celebrate | 完成任务庆祝 | 右键切换 |
+| sleep | 睡觉挂机 | 双击她切换 |
+| new-message | 消息提醒 | 右键切换 |
+| date-weather | 日期天气播报 | 右键切换 |
+
+### 怎么召唤 isla（Windows）
+
+**双击项目根目录的 `启动isla桌宠.bat`**，她就会出现。
+
+如果双击 bat 没反应，直接双击打包好的程序也一样：
+
+```text
+output/isla-20260815-120437/export/dist/win-unpacked/isla.exe
+```
+
+这个 exe 是打包好的完整程序，不需要装 Node.js、不需要联网。
+
+### 怎么和她互动
+
+| 操作 | 效果 |
+|---|---|
+| **右键点击她** | 弹出动作菜单：切换任意动作 / 退出 |
+| **按住拖动** | 移动她的位置 |
+| **单击她** | 按顺序循环切换动作 |
+| **双击她** | 睡觉 ↔ 唤醒 |
+| 放着不动 | 她会随机表演动作 |
+
+开发模式运行（需要 Node.js 和依赖）：
+
+```bash
+cd output/isla-20260815-120437/export
+npm start
+```
+
+isla 的所有档案（角色设定、10 个动作的 prompt 和精灵图、导出的应用）都在：
+
+```text
+output/isla-20260815-120437/
+```
+
+---
+
+## 从零生成一只新桌宠
+
+### 你需要准备什么？
+
+#### 1. 本地环境
 
 | 依赖 | 用途 | 建议 |
 |---|---|---|
@@ -28,18 +82,16 @@
 | Claude Code | 运行 `/create-pet` skill | 必需 |
 | macOS 或 Windows | 打包/运行桌宠 | macOS 上可打 mac 包；Windows 包建议在 Windows 上验证 |
 
-如果你不确定是否装好了 Node.js，可以在终端运行：
+确认 Node.js 已安装：
 
 ```bash
 node -v
 npm -v
 ```
 
-### 2. 图像生成 API
+#### 2. 图像生成 API
 
-生成动作图需要一个兼容 OpenAI Images API 的图像模型接口。
-
-必须配置：
+生成动作图需要一个兼容 OpenAI Images API 的图像模型接口：
 
 ```env
 IMAGE_API_BASE_URL=https://api.openai.com/v1
@@ -50,9 +102,9 @@ IMAGE_QUALITY=high
 IMAGE_N=1
 ```
 
-### 3. 文本模型 API（可选）
+#### 3. 文本模型 API（可选）
 
-当前 `/create-pet` 主要由 Claude Code 自己完成对话、动作设计和 prompt 创作。只有你使用 Web UI 或额外自动化脚本时，才可能需要文本模型配置：
+当前 `/create-pet` 主要由 Claude Code 自己完成对话、动作设计和 prompt 创作。只有使用 Web UI 或额外自动化脚本时，才可能需要文本模型配置：
 
 ```env
 TEXT_API_BASE_URL=
@@ -62,19 +114,15 @@ TEXT_MODEL=gpt-5.5
 
 ---
 
-## 第一次使用
+### 第一次使用
 
-### Step 1：安装依赖
-
-在项目根目录执行：
+**Step 1：安装依赖**
 
 ```bash
 npm install
 ```
 
-### Step 2：配置 `.env`
-
-如果项目里没有 `.env`，先复制模板：
+**Step 2：配置 `.env`**
 
 ```bash
 cp .env.example .env
@@ -91,9 +139,9 @@ IMAGE_QUALITY=high
 IMAGE_N=1
 ```
 
-### Step 3：启动 Claude Code
+**Step 3：启动 Claude Code，执行 skill**
 
-在项目根目录打开 Claude Code，然后执行：
+在项目根目录打开 Claude Code：
 
 ```text
 /create-pet /你的/参考图/路径.png
@@ -103,41 +151,20 @@ IMAGE_N=1
 
 ---
 
-## `/create-pet` 会做什么？
+### `/create-pet` 会做什么？
 
-完整流程如下：
+完整流程：
 
-1. **获取参考图**
-   - 你提供一张人物图或角色图。
-
-2. **先确认项目名**
-   - Claude 会先建议一个桌宠项目名。
-   - 你可以确认或改名。
-   - 确认后才会创建 `output/<名字>-<时间戳>/` 工作区。
-
-3. **询问是否生成标准参考图**
-   - Claude 会问你：
-     - 要不要先基于原始图提取人物特征，生成一张更适合后续动作的标准参考图？
-   - 如果你说“不需要”：
-     - 直接把原图复制成 `reference.png`。
-     - 后续所有动作都严格以这张图为准。
-   - 如果你说“需要”：
-     - Claude 会先提取人物特征。
-     - 生成并确认一张标准参考图。
-     - 确认后的图会写入 `reference.png`。
-
-4. **设计动作列表**
-   - 动作不会套固定默认模板。
-   - Claude 会根据你的描述生成动作。
-   - 动作概览会用表格展示，例如：
+1. **获取参考图** —— 你提供一张人物图或角色图。
+2. **先确认项目名** —— Claude 建议一个桌宠项目名，你确认或改名后，才创建 `output/<名字>-<时间戳>/` 工作区。
+3. **询问是否生成标准参考图** —— 需要则提取人物特征生成标准参考图；不需要则直接用原图作为 `reference.png`。
+4. **设计动作列表** —— 不套固定模板，根据你的描述生成动作，用表格展示：
 
    | 序号 | id | 动作名 | 帧数 | FPS | 动作说明 |
    |---:|---|---|---:|---:|---|
    | 1 | online-buddy | 男友搭子上线 | 6 | 2 | 抬手打招呼，轻松上线陪你工作 |
 
-5. **生成每个动作的 Prompt**
-   - 每个动作会生成一个独立 prompt 文件。
-   - 生成多个 prompt 时会显示进度：
+5. **生成每个动作的 Prompt** —— 每个动作一个 prompt 文件，生成时显示进度：
 
    ```text
    正在生成 Prompt 1/8：男友搭子上线（online-buddy）
@@ -145,17 +172,9 @@ IMAGE_N=1
    Prompt 已全部生成：8/8
    ```
 
-6. **先试生成一个动作**
-   - 默认先生成一个最能代表角色气质的动作。
-   - 你确认人物是否像、动作是否对、绿幕是否干净。
-
-7. **安全切片**
-   - 使用 `scripts/repack-sprite-safe.ts`。
-   - 目标是完整保留人物，不能切掉头发、手、脚或道具。
-   - 会清理绿幕边缘，减少脏绿毛边。
-
-8. **批量生成剩余动作**
-   - 生成多个动作时会显示进度：
+6. **先试生成一个动作** —— 确认人物像不像、动作对不对、绿幕干不干净。
+7. **安全切片** —— 使用 `scripts/repack-sprite-safe.ts`，完整保留人物（头发、手、脚、道具都不能切掉），并清理绿幕边缘。
+8. **批量生成剩余动作** —— 显示进度：
 
    ```text
    正在生成动作 1/8：男友搭子上线（online-buddy）
@@ -164,22 +183,9 @@ IMAGE_N=1
    - 已完成 1/8
    ```
 
-9. **确认最终效果**
-   - 检查人物是否像 reference。
-   - 检查不同动作大小是否一致。
-   - 检查是否有串帧、残留、毛边。
-
-10. **询问打包平台**
-    - 打包前 Claude 必须问你：
-
-    ```text
-    你要打包成哪个平台？mac、windows，还是两个都要？
-    ```
-
-11. **生成安装包图标并打包**
-    - 图标会从 `reference.png` 生成。
-    - 会自动清理绿色背景，默认使用透明背景。
-    - 然后生成 mac / windows / all 对应安装包。
+9. **确认最终效果** —— 人物一致性、动作尺寸一致性、无串帧/残留/毛边。
+10. **询问打包平台** —— 打包前 Claude 必须问你：`mac、windows，还是两个都要？`
+11. **生成图标并打包** —— 图标从 `reference.png` 生成（自动清理绿色背景，默认透明底），再生成对应平台的安装包。
 
 ---
 
@@ -214,38 +220,32 @@ output/<pet-name>-<YYYYMMDD-HHMMSS>/
 
 ---
 
-## 当前 create-pet 必需文件
+## 项目结构（精简版）
 
-如果只运行 Claude Code 的 `/create-pet` skill，核心必需文件是：
+如果只运行 `/create-pet` skill，核心必需文件是：
 
 ```text
-.claude/skills/create-pet/SKILL.md
+.claude/skills/create-pet/SKILL.md   # skill 定义
 
-.env
-.env.example
-package.json
-package-lock.json
+.env / .env.example                  # API 配置
+package.json / package-lock.json
 
-scripts/generate-sprite.ts
-scripts/repack-sprite-safe.ts
-scripts/export-pet.ts
+scripts/generate-sprite.ts           # 调图像 API 生成 raw 图
+scripts/repack-sprite-safe.ts        # 安全切片 + 绿幕清理
+scripts/export-pet.ts                # 导出并打包 Electron 应用
 
-preload.js
+preload.js                           # Electron 运行时
 renderer/index.html
 renderer/style.css
 renderer/sprite-engine.js
 renderer/app.js
 
-output/
+output/                              # 每只桌宠的工作区
+
+启动isla桌宠.bat                      # isla 一键启动（Windows，双击即可）
 ```
 
-依赖安装后还会有：
-
-```text
-node_modules/
-```
-
-`node_modules/` 不建议入库，其他机器上用 `npm install` 重新安装即可。
+依赖安装后还会有 `node_modules/`，不建议入库，其他机器上用 `npm install` 重新安装即可。
 
 ---
 
@@ -253,9 +253,7 @@ node_modules/
 
 ### `scripts/generate-sprite.ts`
 
-调用图像 API 生成动作 sprite raw 图。
-
-常见用法：
+调用图像 API 生成动作 sprite raw 图：
 
 ```bash
 npx tsx scripts/generate-sprite.ts \
@@ -264,15 +262,11 @@ npx tsx scripts/generate-sprite.ts \
   --reference-image output/<session>/reference.png
 ```
 
-如果传了 `--reference-image`，脚本会使用图片编辑接口，把 `reference.png` 作为参考图上传。
-
----
+传了 `--reference-image` 时，脚本会把 `reference.png` 作为参考图上传，使用图片编辑接口。
 
 ### `scripts/repack-sprite-safe.ts`
 
-安全切片脚本。用于把 raw sprite 图切成最终运行时使用的横向 sprite strip。
-
-常见用法：
+安全切片脚本，把 raw 图切成最终运行时使用的横向 sprite strip：
 
 ```bash
 npx tsx scripts/repack-sprite-safe.ts \
@@ -285,25 +279,21 @@ npx tsx scripts/repack-sprite-safe.ts \
 它会：
 
 - 检测非绿幕前景区域
-- 确保帧数和动作定义一致
+- 确保检测到的帧数和动作定义一致
 - 给每帧加 padding，避免切掉人物
 - 清理纯绿、近绿、半透明绿边缘
 - 输出纯 `#00ff00` 背景的最终 sprite
 
----
-
 ### `scripts/export-pet.ts`
 
-导出并打包 Electron 桌宠应用。
-
-常见用法：
+导出并打包 Electron 桌宠应用：
 
 ```bash
 npx tsx scripts/export-pet.ts \
   --session-dir output/<session> \
   --app-name "我的桌宠" \
   --app-id "com.desktoy.custom" \
-  --platform mac \
+  --platform win \
   --build
 ```
 
@@ -319,18 +309,18 @@ npx tsx scripts/export-pet.ts \
 
 - 复制 Electron 运行时模板
 - 根据 `actions.json` 生成 `renderer/actions.js`
-- 使用固定 `STAGE_WIDTH` / `STAGE_HEIGHT`，避免右键切换动作时位置跳动
+- 使用固定 `STAGE_WIDTH` / `STAGE_HEIGHT`，避免切换动作时位置跳动
 - 默认 `DISPLAY_SCALE = 0.32`
 - 从 `reference.png` 生成透明背景 app icon
 - 调用 `electron-builder` 打包
+
+> ⚠️ 重新运行 export-pet.ts 会**删除并重建** `export/` 目录（包括里面已经打好的包和安装的依赖）。
 
 ---
 
 ## 常见问题
 
 ### 1. 提示找不到 `.env`
-
-复制模板：
 
 ```bash
 cp .env.example .env
@@ -344,19 +334,13 @@ cp .env.example .env
 
 - 是否使用了 `reference.png`
 - `generate-sprite.ts` 是否传了 `--reference-image`
-- prompt 中是否强调“必须和 reference.png 是同一个人”
+- prompt 中是否强调"必须和 reference.png 是同一个人"
 
 如果还是不像，建议重新生成标准参考图，或加强角色锁定描述。
 
 ### 3. 切片后人物被切掉
 
-当前主流程应使用：
-
-```text
-scripts/repack-sprite-safe.ts
-```
-
-不要回退到旧的固定坐标切片 `scripts/repack-sprite.ts`。
+当前主流程使用 `scripts/repack-sprite-safe.ts`，不要回退到固定坐标切片。
 
 ### 4. 边缘有绿色毛边
 
@@ -364,30 +348,19 @@ scripts/repack-sprite-safe.ts
 
 ### 5. 桌宠太大或太小
 
-默认展示比例是：
-
-```text
-DISPLAY_SCALE = 0.32
-```
-
-可以在 `scripts/export-pet.ts` 里调整。数值越小，桌宠越小。
+默认展示比例 `DISPLAY_SCALE = 0.32`，可以在 `scripts/export-pet.ts` 里调整。数值越小，桌宠越小。
 
 ### 6. 右键切换动作时位置跳动
 
-导出产物应包含固定舞台：
+导出产物包含固定舞台 `STAGE_WIDTH` / `STAGE_HEIGHT`，所有动作在同一个舞台内底部对齐、水平居中。
 
-```text
-STAGE_WIDTH
-STAGE_HEIGHT
-```
+### 7. 双击启动后窗口开了但看不到角色
 
-所有动作会在同一个舞台内底部对齐、水平居中，避免切换动作时窗口变化。
+任务栏有 isla 图标但看不到她，通常是**默认动作 id 不匹配**导致画面一直空白。当前 `renderer/app.js` 已修复：默认动作会优先取 `idle`，没有则取 `idle-buddy`，再没有则取动作表的第一个动作。如果你的桌宠动作表没有叫 `idle` 的动作，确认用的是修复后的 `app.js`。
 
-### 7. macOS 提示应用未签名或打不开
+### 8. macOS 提示应用未签名或打不开
 
-这是本地测试包常见现象。因为没有 Apple Developer 证书签名和公证。
-
-自己测试时可以在系统设置的“隐私与安全”里允许打开。正式分发给别人时，需要签名和公证。
+这是本地测试包常见现象（没有 Apple Developer 证书签名和公证）。自己测试时可以在系统设置的"隐私与安全"里允许打开；正式分发给别人时，需要签名和公证。
 
 ---
 

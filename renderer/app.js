@@ -4,7 +4,10 @@ const canvas = document.getElementById('pet-canvas');
 const engine = new SpriteEngine(canvas);
 
 // State
-let currentActionId = 'idle';
+// Default idle action: prefer 'idle', fall back to 'idle-buddy' or the first
+// action in ACTIONS (ids vary per pet, e.g. isla uses 'idle-buddy')
+const DEFAULT_ACTION_ID = ACTIONS['idle'] ? 'idle' : ACTIONS['idle-buddy'] ? 'idle-buddy' : Object.keys(ACTIONS)[0];
+let currentActionId = DEFAULT_ACTION_ID;
 let idleTimer = 0;
 let idleThreshold = 10000 + Math.random() * 15000;
 let lastTimestamp = 0;
@@ -18,7 +21,7 @@ let dragStartY = 0;
 
 // Initialize
 function init() {
-  switchAction('idle', false);
+  switchAction(DEFAULT_ACTION_ID, false);
 
   lastTimestamp = performance.now();
   requestAnimationFrame(gameLoop);
@@ -41,7 +44,7 @@ function init() {
       clickTimeout = null;
       // Double-click: toggle sleep
       if (currentActionId === 'sleep') {
-        switchAction('idle', true);
+        switchAction(DEFAULT_ACTION_ID, true);
       } else {
         switchAction('sleep', true);
       }
@@ -97,7 +100,7 @@ function gameLoop(timestamp) {
   engine.render();
 
   // Idle transition — random action after a while
-  if (currentActionId === 'idle' && !isUserTriggered) {
+  if (currentActionId === DEFAULT_ACTION_ID && !isUserTriggered) {
     idleTimer += dt;
     if (idleTimer >= idleThreshold) {
       triggerRandomAction();
@@ -140,7 +143,7 @@ function handleActionComplete(action) {
   if (action.nextAction) {
     switchAction(action.nextAction, false);
   } else {
-    switchAction('idle', false);
+    switchAction(DEFAULT_ACTION_ID, false);
   }
 }
 
