@@ -4,6 +4,8 @@
 
 一个基于 [**Claude Code Skill**](https://github.com/CyanWong-pm/create-pet-skill) 的对话式桌宠生成工具。你只需要准备一张人物参考图，就可以跟着 Claude 的中文提示生成 Q 版动漫桌宠动作、精灵图，并打包Windows 桌面应用。
 
+后续可能会参考https://github.com/LorisYounger/VPet,https://github.com/ayangweb/BongoCat,https://github.com/kuliantnt/qq-maid-bot,https://github.com/worm128/AI-YinMei,https://github.com/moeru-ai/airi往agent上做情感支撑
+
 ---
 
 ## 适合谁使用？
