@@ -189,7 +189,7 @@ cp <reference-image> output/<confirmed-name>-<YYYYMMDD-HHMMSS>/original.png
 | `sleep` | 双击睡觉 / 闲时自动睡觉 | 自动睡觉功能失效 |
 | `drink-water` | 喝水提醒 | 对应提醒功能失效 |
 
-随机表演（IDLE_TRANSITIONS）会自动排除 `idle`、`typing`、`sleep` 这三个语义动作。
+`SEMANTIC_ACTIONS = ['idle', 'typing', 'sleep', 'poke-react']` 由导出脚本生成：语义动作不参与**单击循环切换**（它们各有专属触发方式）。桌宠不会自己随机切动作；只有 10 分钟不互动自动睡觉是自主行为。
 
 推荐元数据结构：
 
@@ -424,7 +424,7 @@ npx tsx scripts/export-pet.ts \
 - 桌面显示太大或太小：默认自动适配屏幕，可用 `Ctrl+Shift+←/→` 或右键菜单微调；`DISPLAY_SCALE = 0.32` 仅为无 Electron 环境的兜底值。
 - 切换动作时位置跳动：检查导出的 `actions.js` 是否包含固定 `STAGE_WIDTH` / `STAGE_HEIGHT`，渲染时是否在固定舞台中底部对齐、水平居中。
 - 打包失败：检查 `actions.json` 中是否有 `spriteReady: true` 且 `sprites/<id>.png` 存在。
-- 打包时 `uiohook-napi` 原生依赖 rebuild 报错：该包是 N-API prebuild（Electron 28 内嵌 Node 18.18 可直接使用），可在导出应用的 `package.json` 里把 `build.npmRebuild` 设为 `false` 后重试；rebuild 失败不影响运行，键盘镜像会自动降级（键盘模式窗口仍在，只是不跟手）。
+- 打包时 `uiohook-napi` 原生依赖 rebuild 报错：该包是 N-API prebuild（Electron 28 内嵌 Node 18.18 可直接使用），可在导出应用的 `package.json` 里把 `build.npmRebuild` 设为 `false` 后重试；rebuild 失败不影响运行，键盘镜像会自动降级（桌宠不会跟着打字，其余功能正常）。
 
 ## 进度反馈
 

@@ -48,13 +48,9 @@ function generateActionsJs(actions: ActionDefinition[]): string {
     )
     .join(',\n');
 
-  // Semantic actions (input mirror, feeding, sleep) must not be played randomly;
-  // sleep is taken over by the idle auto-sleep behavior.
-  const SEMANTIC_ACTIONS = ['idle', 'typing', 'sleep'];
-  const transitions = actions
-    .filter((a) => !SEMANTIC_ACTIONS.includes(a.id))
-    .map((a) => JSON.stringify(a.id))
-    .join(', ');
+  // 语义动作（typing=键盘镜像、sleep=双击/自动睡觉、poke-react=戳一戳/点击反应）
+  // 不参与单击循环切换：它们各有专属触发方式，混进循环里会让用户困惑
+  const SEMANTIC_ACTIONS = ['idle', 'typing', 'sleep', 'poke-react'];
 
   return `// DISPLAY_SCALE is only a fallback for environments without the Electron
 // main process (e.g. plain browser preview). In the real app the pet auto-fits
@@ -67,7 +63,7 @@ const ACTIONS = {
 ${entries}
 };
 
-const IDLE_TRANSITIONS = [${transitions}];
+const SEMANTIC_ACTIONS = ${JSON.stringify(SEMANTIC_ACTIONS)};
 `;
 }
 
@@ -182,7 +178,6 @@ const DEFAULT_SETTINGS = {
   zoom: 1,
   opacity: 1,
   inputMirror: true,
-  keyboardMode: true,
   position: null,
 };
 
@@ -224,7 +219,6 @@ function broadcastSettings() {
 
 // ---- windows ----
 let petWindow = null;
-let keyboardWindow = null;
 let tray = null;
 let lastDisplayKey = null;
 
@@ -305,7 +299,11 @@ function createWindow() {
     x: pos.x, y: pos.y,
     width: width, height: height,
     transparent: true, frame: false, alwaysOnTop: true,
-    skipTaskbar: false, resizable: false, hasShadow: false,
+    // 不进任务栏：桌宠由托盘管理
+    skipTaskbar: true, resizable: false, hasShadow: false,
+    // type: 'toolbar' -> WS_EX_TOOLWINDOW，彻底不进 alt+tab（skipTaskbar 只管任务栏），
+    // 从根源上消除「退出后 alt+tab 残留桌宠窗口」的幽灵条目
+    type: 'toolbar',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false,
@@ -384,10 +382,8 @@ function toggleVisible() {
   if (!petWindow || petWindow.isDestroyed()) return;
   if (petWindow.isVisible()) {
     petWindow.hide();
-    if (keyboardWindow && !keyboardWindow.isDestroyed()) keyboardWindow.hide();
   } else {
     petWindow.show();
-    if (keyboardWindow && !keyboardWindow.isDestroyed()) keyboardWindow.show();
   }
 }
 
@@ -407,11 +403,6 @@ ${menuItems}
   items.push({ label: '放大 (Ctrl+Shift+\\u2192)', click: function () { sendCommand('zoom-in'); } });
   items.push({ label: '缩小 (Ctrl+Shift+\\u2190)', click: function () { sendCommand('zoom-out'); } });
   items.push({ label: '恢复默认大小', click: function () { settings.zoom = 1; broadcastSettings(); } });
-  items.push({ type: 'separator' });
-  items.push({
-    label: (settings.keyboardMode ? '\\u2713 ' : '') + '键盘模式（跟手打字键盘）',
-    click: function () { setKeyboardMode(!settings.keyboardMode); },
-  });
   items.push({ type: 'separator' });
   items.push({ label: '\\u9000\\u51fa', click: function () { app.quit(); } });
   return Menu.buildFromTemplate(items);
@@ -444,13 +435,13 @@ function initInputCapture() {
   let lastClickSentAt = 0;
   try {
     uiohook.on('keydown', function () {
-      // 键盘镜像只发给键盘模式窗口；持续输入期间每 1 秒补发一次，动画不间断
+      // 键盘镜像直接发给桌宠本体：敲键盘 -> 她切到「敲键盘」动作；持续输入期间每 1 秒补发一次，动画不间断
       const now = Date.now();
       if (now - lastKeyEventAt > 2000) lastKeySentAt = 0; // typing paused 2s -> reset cooldown
       lastKeyEventAt = now;
-      if (now - lastKeySentAt >= 1000 && keyboardWindow && !keyboardWindow.isDestroyed()) {
+      if (now - lastKeySentAt >= 1000 && petWindow && !petWindow.isDestroyed()) {
         lastKeySentAt = now;
-        keyboardWindow.webContents.send('input-event', { type: 'keydown' });
+        petWindow.webContents.send('input-event', { type: 'keydown' });
       }
     });
     uiohook.on('keyup', function () {
@@ -459,8 +450,8 @@ function initInputCapture() {
     uiohook.on('mousedown', function (e) {
       const now = Date.now();
       if (now - lastClickSentAt < 3000 || !petWindow || petWindow.isDestroyed()) return;
-      // 点在桌宠/键盘窗口上的点击由它们自己的事件处理，不镜像
-      if (clickInsideWindow(e, petWindow) || clickInsideWindow(e, keyboardWindow)) return;
+      // 点在桌宠窗口上的点击由它自己的事件处理，不镜像
+      if (clickInsideWindow(e, petWindow)) return;
       lastClickSentAt = now;
       petWindow.webContents.send('input-event', { type: 'mouse-down', button: e.button });
     });
@@ -476,38 +467,6 @@ function clickInsideWindow(e, win) {
   if (!win || win.isDestroyed()) return false;
   const b = win.getBounds();
   return e.x >= b.x && e.x <= b.x + b.width && e.y >= b.y && e.y <= b.y + b.height;
-}
-
-// ---- keyboard mode window: BongoCat-style standalone typing mirror ----
-// 独立小窗口（人物 + 手绘键盘），敲键盘时播 typing；窗口本身点击穿透，
-// 固定主屏底部居中，不参与拖拽。窗口尺寸 480x370 与 keyboard.html 画布一致。
-function createKeyboardWindow() {
-  if (keyboardWindow && !keyboardWindow.isDestroyed()) return;
-  const wa = screen.getPrimaryDisplay().workArea;
-  const w = 480;
-  const h = 370;
-  keyboardWindow = new BrowserWindow({
-    x: wa.x + Math.round((wa.width - w) / 2),
-    y: wa.y + wa.height - h,
-    width: w, height: h,
-    transparent: true, frame: false, alwaysOnTop: true,
-    skipTaskbar: true, resizable: false, hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false,
-    },
-  });
-  keyboardWindow.setIgnoreMouseEvents(true, { forward: true });
-  keyboardWindow.loadFile(path.join(__dirname, 'renderer', 'keyboard.html'));
-  attachErrorCapture(keyboardWindow, 'keyboard');
-  keyboardWindow.on('closed', function () { keyboardWindow = null; });
-}
-
-function setKeyboardMode(v) {
-  settings.keyboardMode = !!v;
-  if (settings.keyboardMode) createKeyboardWindow();
-  else if (keyboardWindow && !keyboardWindow.isDestroyed()) keyboardWindow.close();
-  broadcastSettings();
 }
 
 // ---- IPC ----
@@ -605,7 +564,6 @@ app.whenReady().then(function () {
     createTray();
     initInputCapture();
     registerShortcuts();
-    if (settings.keyboardMode) createKeyboardWindow();
     logStep('startup-complete');
     screen.on('display-added', checkDisplayChange);
     screen.on('display-removed', checkDisplayChange);
@@ -619,9 +577,14 @@ app.whenReady().then(function () {
 });
 
 app.on('before-quit', function () {
-  try {
-    if (uiohook) uiohook.stop();
-  } catch (e) { /* ignore */ }
+  // 先隐藏并销毁所有窗口 + 托盘，再收尾，避免 alt+tab/任务栏残留幽灵条目
+  // （uiohook 钩子不手动 stop：进程退出时系统自动释放，stop() 会拖慢甚至卡住退出）
+  try { if (tray) tray.destroy(); } catch (e) { /* ignore */ }
+  [petWindow].forEach(function (win) {
+    try {
+      if (win && !win.isDestroyed()) { win.hide(); win.destroy(); }
+    } catch (e) { /* ignore */ }
+  });
   globalShortcut.unregisterAll();
   if (pendingSettingsSave) {
     clearTimeout(pendingSettingsSave);
@@ -738,8 +701,6 @@ async function assertRequiredFiles(exportDir: string, actionIds: string[]) {
     'renderer/actions.js',
     'renderer/sprite-engine.js',
     'renderer/app.js',
-    'renderer/keyboard.html',
-    'renderer/keyboard.js',
     ...actionIds.map((id) => `sprites/${id}.png`),
   ];
 
@@ -832,7 +793,7 @@ async function main() {
   }
 
   await fs.copyFile(path.join(projectRoot, 'preload.js'), path.join(exportDir, 'preload.js'));
-  for (const f of ['index.html', 'style.css', 'sprite-engine.js', 'app.js', 'keyboard.html', 'keyboard.js']) {
+  for (const f of ['index.html', 'style.css', 'sprite-engine.js', 'app.js']) {
     await copyIfExists(path.join(projectRoot, 'renderer', f), path.join(exportDir, 'renderer', f));
   }
   await generateIconAssets(referencePath, path.join(exportDir, 'assets'));

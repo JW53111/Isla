@@ -1,6 +1,6 @@
 // Main application controller — desktop pet app
 // v2: auto-fit scaling + zoom, head-poke, idle auto-sleep, drift, breathing,
-//     click reactions (键盘镜像已分离到独立的键盘模式窗口)
+//     click reactions (键盘镜像：敲键盘 -> 切「敲键盘」动作，停手回到待机)
 
 const canvas = document.getElementById('pet-canvas');
 const engine = new SpriteEngine(canvas);
@@ -15,8 +15,6 @@ const AUTO_SLEEP_MS = 10 * 60 * 1000; // no interaction for 10 min -> fall aslee
 const POKE_STREAK_MS = 6000;          // 3 pokes within 6 s -> cheer-up
 
 let currentActionId = DEFAULT_ACTION_ID;
-let idleTimer = 0;
-let idleThreshold = 25000 + Math.random() * 20000;
 let lastTimestamp = 0;
 let isUserTriggered = false;
 let lastInteractionAt = Date.now();
@@ -35,6 +33,9 @@ let dragStartY = 0;
 // Click / double-click handling
 let clickTimer = null;
 let clickWasHead = false;
+
+// Typing mirror: hold typing action while keys keep coming, back to idle 1.5 s after
+let typingHoldTimer = null;
 
 // Head-poke streak
 let pokeStreak = 0;
@@ -138,9 +139,16 @@ async function init() {
     });
 
     // Global input mirror (uiohook in main process)
-    // 键盘镜像已分离到独立的「键盘模式」窗口（BongoCat 风格），这里只留鼠标点击反应
+    // 敲键盘 -> 切「敲键盘」动作，停手 1.5 秒回到待机；点击别处 -> 撒娇反应
     api.onInputEvent((ev) => {
-      if (ev.type === 'mouse-down' && ACTIONS['poke-react']) {
+      if (ev.type === 'keydown') {
+        if (!ACTIONS['typing']) return;
+        clearTimeout(typingHoldTimer);
+        if (currentActionId !== 'typing') switchAction('typing', false);
+        typingHoldTimer = setTimeout(() => {
+          if (currentActionId === 'typing') switchAction(DEFAULT_ACTION_ID, false);
+        }, 1500);
+      } else if (ev.type === 'mouse-down' && ACTIONS['poke-react']) {
         switchAction('poke-react', false);
       }
     });
@@ -228,16 +236,6 @@ function gameLoop(timestamp) {
 
   engine.update(dt);
 
-  // Idle transition — random action after a while
-  if (currentActionId === DEFAULT_ACTION_ID && !isUserTriggered) {
-    idleTimer += dt;
-    if (idleTimer >= idleThreshold) {
-      triggerRandomAction();
-      idleTimer = 0;
-      idleThreshold = 30000 + Math.random() * 30000;
-    }
-  }
-
   // Auto-sleep: long time without interaction while resting
   if (currentActionId === DEFAULT_ACTION_ID && Date.now() - lastInteractionAt > AUTO_SLEEP_MS) {
     switchAction('sleep', false);
@@ -283,7 +281,6 @@ function switchAction(actionId, userTriggered = false) {
 
   currentActionId = actionId;
   isUserTriggered = userTriggered;
-  idleTimer = 0;
   if (actionId !== DEFAULT_ACTION_ID) drifting = false;
   engine.play(actionId);
   // Window size is STAGE-based and fixed across actions — no resize here
@@ -300,15 +297,12 @@ function handleActionComplete(action) {
   }
 }
 
-// Trigger a random action from idle
-function triggerRandomAction() {
-  const idx = Math.floor(Math.random() * IDLE_TRANSITIONS.length);
-  switchAction(IDLE_TRANSITIONS[idx], false);
-}
-
-// Cycle through all actions (click behavior)
+// Cycle through showcase actions (click behavior) — semantic actions
+// (typing/sleep/poke-react) have their own dedicated triggers and are skipped
 function cycleNextAction() {
-  const actionIds = Object.keys(ACTIONS);
+  const excluded = typeof SEMANTIC_ACTIONS !== 'undefined' ? SEMANTIC_ACTIONS : ['typing', 'sleep'];
+  const actionIds = Object.keys(ACTIONS).filter((id) => !excluded.includes(id));
+  if (actionIds.length === 0) return;
   const currentIdx = actionIds.indexOf(currentActionId);
   const nextIdx = (currentIdx + 1) % actionIds.length;
   switchAction(actionIds[nextIdx], true);
