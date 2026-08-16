@@ -178,6 +178,19 @@ cp <reference-image> output/<confirmed-name>-<YYYYMMDD-HHMMSS>/original.png
 - 动作概览必须用 Markdown 表格展示，提升可读性；不要只用长段落或 JSON 直接甩给用户。
 - 6 帧动作不是简单“调慢”，而是要固定节奏：动作变化均匀、每帧停留稳定、不要忽快忽慢。
 
+**运行时语义动作 id（建议而非强制）**：运行时新功能会按 id 查找动作，找不到就自动降级，不影响导出。建议在动作设计时覆盖这些 id（名字可自定义）：
+
+| 语义 id | 用途 | 缺该动作时 |
+|---|---|---|
+| `typing` | 用户敲键盘时镜像表演 | 输入镜像跳过打字反应 |
+| `poke-react` | 摸头 / 点击反应 | 摸头时播 `cheer-up` 或直接忽略 |
+| `cheer-up` | 连续摸头 3 次的反应 | 摸头连击只播 poke-react |
+| `new-message` | AI 聊天收到回复时 | 收到回复不表演动作 |
+| `sleep` | 双击睡觉 / 闲时自动睡觉 | 自动睡觉功能失效 |
+| `drink-water` | 喝水提醒 | 对应提醒功能失效 |
+
+随机表演（IDLE_TRANSITIONS）会自动排除 `idle`、`typing`、`sleep` 这三个语义动作。
+
 推荐元数据结构：
 
 ```json
@@ -365,7 +378,7 @@ npx tsx scripts/repack-sprite-safe.ts \
 - 不同动作中人物大小是否一致
 - 同一动作中每帧是否无残留、无串帧、无脏绿毛边
 - 分割带是否已经被切片阶段正确处理
-- 桌面展示大小是否合适；默认使用 `DISPLAY_SCALE = 0.32`，除非用户明确要求更大或更小
+- 桌面展示大小是否合适；运行时默认按屏幕工作区高度自动缩放（约 20%），用户可用 `Ctrl+Shift+←/→` 或右键菜单手动微调并持久化；`DISPLAY_SCALE = 0.32` 仅是脱离 Electron 时的兜底值，不再需要手动调整
 - 右键切换动作时是否保持固定位置，不因动作尺寸不同而跳动
 
 ### Step 5.1：生成安装包图标
@@ -408,9 +421,10 @@ npx tsx scripts/export-pet.ts \
 - 纯绿间隔不清楚、间隔过窄或尺寸不匹配：调整 prompt 后重生，不要强行切图。
 - 安全切片失败：保留 raw 图，报告原因，让用户决定是否重生；不要回退到会切坏人物的固定坐标切片。
 - 出现毛边：优先检查切片脚本是否清理了近绿色/半透明绿幕边缘，最终背景必须是纯 `#00ff00`。
-- 桌面显示太大或太小：调整 `DISPLAY_SCALE`；默认推荐 `0.32`。
+- 桌面显示太大或太小：默认自动适配屏幕，可用 `Ctrl+Shift+←/→` 或右键菜单微调；`DISPLAY_SCALE = 0.32` 仅为无 Electron 环境的兜底值。
 - 切换动作时位置跳动：检查导出的 `actions.js` 是否包含固定 `STAGE_WIDTH` / `STAGE_HEIGHT`，渲染时是否在固定舞台中底部对齐、水平居中。
 - 打包失败：检查 `actions.json` 中是否有 `spriteReady: true` 且 `sprites/<id>.png` 存在。
+- 打包时 `uiohook-napi` 原生依赖 rebuild 报错：该包是 N-API prebuild（Electron 28 内嵌 Node 18.18 可直接使用），可在导出应用的 `package.json` 里把 `build.npmRebuild` 设为 `false` 后重试；rebuild 失败不影响运行，键盘镜像会自动降级（键盘模式窗口仍在，只是不跟手）。
 
 ## 进度反馈
 

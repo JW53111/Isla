@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>和桌宠聊天</title>
+  <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+  <div id="chat-card">
+    <div id="chat-header">
+      <span id="chat-title">和 <b id="pet-name">她</b> 聊天</span>
+      <div id="header-buttons">
+        <button id="btn-settings" title="API 设置">⚙</button>
+        <button id="btn-clear" title="清空对话">🗑</button>
+        <button id="btn-close" title="关闭">✕</button>
+      </div>
+    </div>
+
+    <div id="settings-panel" class="hidden">
+      <label>API 地址
+        <input id="cfg-base-url" type="text" placeholder="https://api.openai.com/v1">
+      </label>
+      <label>API Key
+        <input id="cfg-api-key" type="password" placeholder="sk-...">
+      </label>
+      <label>模型
+        <input id="cfg-model" type="text" placeholder="gpt-4o-mini">
+      </label>
+      <div id="settings-actions">
+        <button id="btn-save-settings">保存设置</button>
+        <span id="settings-hint" class="hint"></span>
+      </div>
+      <p class="hint">Key 只保存在本机（%APPDATA% 下的 api-config.json），不会随安装包分享。</p>
+    </div>
+
+    <div id="chat-messages"></div>
+
+    <div id="chat-input-row">
+      <input id="chat-input" type="text" placeholder="和她说点什么…（Enter 发送）" autocomplete="off">
+      <button id="btn-send">发送</button>
+    </div>
+  </div>
+  <script src="chat.js"></script>
+</body>
+</html>

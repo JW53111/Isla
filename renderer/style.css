@@ -25,4 +25,5 @@ html, body {
 #pet-canvas {
   display: block;
   -webkit-app-region: no-drag;
+  transform-origin: 50% 100%;
 }

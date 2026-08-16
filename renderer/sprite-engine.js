@@ -11,6 +11,9 @@ class SpriteEngine {
     this.frameTimer = 0;
     this.isPlaying = false;
     this.spriteImage = null;
+    this.displayWidth = 256;
+    this.displayHeight = 1024;
+    this.sizedExternally = false;
 
     // Callbacks
     this.onFrameChange = null;
@@ -18,6 +21,22 @@ class SpriteEngine {
 
     // Placeholder rendering (while waiting for real sprite sheets)
     this.usePlaceholder = true;
+  }
+
+  // Set display size from outside (app.js computes auto-fit scale)
+  // Once set externally, configureCanvas() becomes a no-op
+  setDisplaySize(w, h) {
+    this.displayWidth = w;
+    this.displayHeight = h;
+    this.sizedExternally = true;
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.style.width = `${w}px`;
+    this.canvas.style.height = `${h}px`;
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.imageSmoothingQuality = 'high';
   }
 
   // Load a sprite sheet image and remove green screen
@@ -66,22 +85,13 @@ class SpriteEngine {
   }
 
   configureCanvas() {
+    // Fallback sizing only (no electronAPI / app.js did not inject a size).
+    // Window resizing is triggered by app.js via resizeWindow — not here.
+    if (this.sizedExternally) return;
     const scale = typeof DISPLAY_SCALE !== 'undefined' ? DISPLAY_SCALE : 1;
     const stageWidth = typeof STAGE_WIDTH !== 'undefined' ? STAGE_WIDTH : (this.currentAction?.frameWidth || 256);
     const stageHeight = typeof STAGE_HEIGHT !== 'undefined' ? STAGE_HEIGHT : (this.currentAction?.frameHeight || 1024);
-    const dpr = window.devicePixelRatio || 1;
-    this.displayWidth = Math.round(stageWidth * scale);
-    this.displayHeight = Math.round(stageHeight * scale);
-    this.canvas.style.width = `${this.displayWidth}px`;
-    this.canvas.style.height = `${this.displayHeight}px`;
-    this.canvas.width = Math.round(this.displayWidth * dpr);
-    this.canvas.height = Math.round(this.displayHeight * dpr);
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.ctx.imageSmoothingEnabled = true;
-    this.ctx.imageSmoothingQuality = 'high';
-    if (window.electronAPI) {
-      window.electronAPI.resizeWindow(this.displayWidth, this.displayHeight);
-    }
+    this.setDisplaySize(Math.round(stageWidth * scale), Math.round(stageHeight * scale));
   }
 
   // Start playing an action
@@ -109,7 +119,8 @@ class SpriteEngine {
     if (!this.isPlaying || !this.currentAction) return;
 
     const action = this.currentAction;
-    const frameDuration = 1000 / action.fps;
+    // 全局放慢 1.5 倍：默认 2fps 动作节奏过快，看着烦躁
+    const frameDuration = (1000 / action.fps) * 1.5;
     this.frameTimer += dt;
 
     if (this.frameTimer >= frameDuration) {

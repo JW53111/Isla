@@ -19,18 +19,19 @@
 
 ## 仓库里已经有一只桌宠：isla
 
-这个仓库内置了一只生成好的桌宠 **isla**（艾拉：银白长发、红瞳、白色制服 + 红色胸结的 Q 版形象），共 **10 个动作**（后续添加）：
+这个仓库内置了一只生成好的桌宠 **isla**（艾拉：银白长发、红瞳、白色制服 + 红色胸结的 Q 版形象），共 **11 个动作**：
 
 | 动作 id | 动作名 | 触发方式 |
 |---|---|---|
 | idle-buddy | 陪班待机 | 启动后默认动作 |
-| cheer-up | 傲娇打气 | 右键切换 |
+| typing | 敲键盘 | 你敲键盘时自动触发（输入镜像） |
+| cheer-up | 傲娇打气 | 连摸 3 次头 |
 | drink-water | 喝水提醒 | 右键切换 |
 | rest-reminder | 休息提醒 | 右键切换 |
 | off-work | 下班提醒 | 右键切换 |
-| poke-react | 戳一戳撒娇 | 右键切换 |
+| poke-react | 戳一戳撒娇 | 戳她 / 你点击鼠标时触发 |
 | celebrate | 完成任务庆祝 | 右键切换 |
-| sleep | 睡觉挂机 | 双击她切换 |
+| sleep | 睡觉挂机 | 双击她切换 / 10 分钟不互动自动睡 |
 | new-message | 消息提醒 | 右键切换 |
 | date-weather | 日期天气播报 | 右键切换 |
 
@@ -50,11 +51,34 @@ output/isla-20260815-120437/export/dist/win-unpacked/isla.exe
 
 | 操作 | 效果 |
 |---|---|
-| **右键点击她** | 弹出动作菜单：切换任意动作 / 退出 |
-| **按住拖动** | 移动她的位置 |
-| **单击她** | 按顺序循环切换动作 |
-| **双击她** | 睡觉 ↔ 唤醒 |
-| 放着不动 | 她会随机表演动作 |
+| **右键点击她** | 弹出动作菜单：切换任意动作 / 缩放 / 键盘模式 / 退出 |
+| **按住拖动** | 移动她的位置（位置会记住，重启后回到原处） |
+| **单击她（身体）** | 按顺序循环切换动作 |
+| **双击她（身体）** | 睡觉 ↔ 唤醒 |
+| **单击她（头部）** | 摸头：戳一戳撒娇；6 秒内连摸 3 次 → 傲娇打气 |
+| 放着不动 | 她会随机表演动作；10 分钟不互动自动睡觉；偶尔在屏幕底部小范围漂移 |
+| 你敲键盘 | 屏幕底部会出现键盘模式小键盘，她在键盘后哒哒跟手打字 |
+| 你在别处点鼠标 | 她会撒娇地看过来 |
+
+### 全局快捷键（任何时候都有效）
+
+| 快捷键 | 功能 |
+|---|---|
+| `Ctrl+Shift+B` | 显示 / 隐藏 |
+| `Ctrl+Shift+← / →` | 缩小 / 放大 |
+| `Ctrl+Shift+↑ / ↓` | 提高 / 降低透明度 |
+| `Ctrl+Shift+R` | 重置位置（回到主显示器右下角） |
+| `Ctrl+Shift+Q` | 退出 |
+
+### 自动适配大小
+
+她会根据你的**屏幕分辨率自动调整大小**（约工作区高度的 20%），换显示器、改分辨率都会自动重算。也可以用快捷键或右键菜单手动微调，缩放会记住。
+
+### 键盘模式（跟手打字键盘，BongoCat 风格）
+
+屏幕底部居中会有一个透明小窗口：isla 坐在一个手绘小键盘后面，你敲键盘时她跟着哒哒打字，停止 1.5 秒回到待机。键盘窗口本身点击穿透，不会挡住你的操作；可以在右键菜单里开关（记住开关状态）。
+
+> 注：AI 聊天功能暂已移除（聊天窗口存在问题），后续需要可再加回。
 
 开发模式运行（需要 Node.js 和依赖）：
 
@@ -312,7 +336,7 @@ npx tsx scripts/export-pet.ts \
 - 复制 Electron 运行时模板
 - 根据 `actions.json` 生成 `renderer/actions.js`
 - 使用固定 `STAGE_WIDTH` / `STAGE_HEIGHT`，避免切换动作时位置跳动
-- 默认 `DISPLAY_SCALE = 0.32`
+- 自动适配屏幕大小（`settings.json` 的 `autoScaleRatio` + `zoom`；`DISPLAY_SCALE` 仅作旧版 fallback）
 - 从 `reference.png` 生成透明背景 app icon
 - 调用 `electron-builder` 打包
 
@@ -350,7 +374,11 @@ cp .env.example .env
 
 ### 5. 桌宠太大或太小
 
-默认展示比例 `DISPLAY_SCALE = 0.32`，可以在 `scripts/export-pet.ts` 里调整。数值越小，桌宠越小。
+新版会自动适配屏幕大小（默认约占工作区高度 20%）。想整体调大小：
+
+- 快捷键 `Ctrl+Shift+← / →`，或右键菜单「放大 / 缩小」
+- 或直接改她的设置文件：`%APPDATA%/isla/settings.json` 里的 `autoScaleRatio`（默认 0.2，越大她越大）和 `zoom`（默认 1.0，手动缩放系数）
+- 改成自动适配前的旧版才需要调 `scripts/export-pet.ts` 里的 `DISPLAY_SCALE`
 
 ### 6. 右键切换动作时位置跳动
 
@@ -359,6 +387,24 @@ cp .env.example .env
 ### 7. 双击启动后窗口开了但看不到角色
 
 任务栏有 isla 图标但看不到她，通常是**默认动作 id 不匹配**导致画面一直空白。当前 `renderer/app.js` 已修复：默认动作会优先取 `idle`，没有则取 `idle-buddy`，再没有则取动作表的第一个动作。如果你的桌宠动作表没有叫 `idle` 的动作，确认用的是修复后的 `app.js`。
+
+### 8. 打包时 npm install / electron-builder 失败（国内网络）
+
+运行时依赖里有 `uiohook-napi`（键盘镜像）一个原生模块，是从 GitHub 下载预编译二进制的。网络不通时的兜底方案：
+
+```bash
+# 用 npmmirror 镜像安装依赖
+npm install --registry=https://registry.npmmirror.com
+
+# 打包时让 electron-builder 也走镜像
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
+npx electron-builder --win
+```
+
+导出模板里已经内置 `npmRebuild: false`（不需要 Visual Studio）和 `signAndEditExecutable: false`（跳过 winCodeSign 下载，代价是 exe 文件图标为默认 Electron 图标，不影响功能）。
+
+这个模块加载失败时应用也会**优雅降级**：键盘镜像不可用 → 键盘模式窗口不会跟着打字，但桌宠本身不会崩溃。
 
 ---
 
