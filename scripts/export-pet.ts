@@ -455,6 +455,18 @@ function initInputCapture() {
       lastClickSentAt = now;
       petWindow.webContents.send('input-event', { type: 'mouse-down', button: e.button });
     });
+    // 眼神跟随：全局鼠标位置 40ms 节流，发相对窗口中心的偏移给渲染层算注视方向
+    let lastMoveSentAt = 0;
+    uiohook.on('mousemove', function (e) {
+      const now = Date.now();
+      if (now - lastMoveSentAt < 40 || !petWindow || petWindow.isDestroyed()) return;
+      lastMoveSentAt = now;
+      const b = petWindow.getBounds();
+      petWindow.webContents.send('pointer-move', {
+        dx: e.x - (b.x + b.width / 2),
+        dy: e.y - (b.y + b.height / 2),
+      });
+    });
     uiohook.start();
     console.log('[pet] 输入镜像已启用');
   } catch (e) {

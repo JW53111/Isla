@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onInputEvent: (callback) => {
     ipcRenderer.on('input-event', (_event, ev) => callback(ev));
   },
+  // 眼神跟随：主进程 40ms 节流发来鼠标相对窗口中心的偏移
+  onPointerMove: (callback) => {
+    ipcRenderer.on('pointer-move', (_event, d) => callback(d));
+  },
   onDisplayChanged: (callback) => {
     ipcRenderer.on('display-config-changed', (_event, d) => callback(d));
   },

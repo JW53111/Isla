@@ -73,6 +73,17 @@ function markInteraction() {
   lastInteractionAt = Date.now();
 }
 
+// 眼神跟随：把「鼠标相对窗口中心」的偏移归一化为注视方向（|v|<=1），
+// 离中心太近时看正前方；引擎内部做平滑
+function updateGazeTarget(dx, dy) {
+  const len = Math.hypot(dx, dy);
+  if (len < 40) {
+    engine.setGazeTarget(0, 0);
+  } else {
+    engine.setGazeTarget(dx / len, dy / len);
+  }
+}
+
 function setZoom(z) {
   z = clamp(z, 0.5, 2.5);
   settings.zoom = z;
@@ -151,6 +162,20 @@ async function init() {
       } else if (ev.type === 'mouse-down' && ACTIONS['poke-react']) {
         switchAction('poke-react', false);
       }
+    });
+
+    // 眼神跟随：主进程发来鼠标相对窗口中心的偏移，归一化后交给引擎
+    api.onPointerMove(({ dx, dy }) => {
+      updateGazeTarget(dx, dy);
+    });
+  } else {
+    // 无主进程（纯浏览器预览）：窗口内 mousemove 兜底
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      updateGazeTarget(
+        e.clientX - rect.left - rect.width / 2,
+        e.clientY - rect.top - rect.height / 2
+      );
     });
   }
 

@@ -19,6 +19,12 @@ class SpriteEngine {
     this.onFrameChange = null;
     this.onComplete = null;
 
+    // Eye tracking (gaze): eye positions detected per frame on sprite load,
+    // pupils drawn on top of the painted eyes and shifted toward the cursor
+    this.eyeFrames = null;      // { actionId, frames: [null | {lx,ly,rx,ry,size}] }
+    this.gaze = { x: 0, y: 0 }; // smoothed gaze offset, normalized -1..1
+    this.gazeTarget = { x: 0, y: 0 };
+
     // Placeholder rendering (while waiting for real sprite sheets)
     this.usePlaceholder = true;
   }
@@ -52,6 +58,8 @@ class SpriteEngine {
         }
         this.spriteImage = this.removeGreenScreen(img);
         this.usePlaceholder = false;
+        // 眼神跟随：检测每帧红瞳位置（闭眼/侧脸帧检测不到 -> 不画瞳孔，天然眨眼）
+        this.eyeFrames = { actionId: actionId, frames: detectEyePairs(this.spriteImage, actionId) };
         resolve(this.spriteImage);
       };
       img.onerror = () => {
@@ -117,6 +125,11 @@ class SpriteEngine {
   // Update animation (call each frame with delta time in ms)
   update(dt) {
     if (!this.isPlaying || !this.currentAction) return;
+
+    // 注视平滑：眼神约 80ms 跟上目标方向，不是瞬移
+    const k = Math.min(1, dt / 80);
+    this.gaze.x += (this.gazeTarget.x - this.gaze.x) * k;
+    this.gaze.y += (this.gazeTarget.y - this.gaze.y) * k;
 
     const action = this.currentAction;
     // 全局放慢 1.5 倍：默认 2fps 动作节奏过快，看着烦躁
@@ -190,6 +203,48 @@ class SpriteEngine {
       dx, dy,
       dw, dh
     );
+    ctx.restore();
+
+    // 眼神跟随：在画的眼珠上叠一层瞳孔，随鼠标方向偏移
+    this.renderGaze(ctx, action, dx, dy, scale);
+  }
+
+  // 设置注视目标方向（归一化 -1..1，原点为窗口中心）
+  setGazeTarget(nx, ny) {
+    this.gazeTarget.x = nx;
+    this.gazeTarget.y = ny;
+  }
+
+  // 在当前帧的眼睛位置画瞳孔；无检测数据（闭眼/背身帧）时什么都不画
+  renderGaze(ctx, action, dx, dy, scale) {
+    if (!this.eyeFrames || this.eyeFrames.actionId !== action.id) return;
+    const eye = this.eyeFrames.frames[this.currentFrame];
+    if (!eye) return;
+    // 瞳孔半径约为眼睛大小的 30%，偏移上限 20%（不跑出虹膜）
+    const r = Math.min(6, Math.max(2.5, eye.size * 0.3)) * scale;
+    const maxShift = Math.min(4.5, Math.max(2, eye.size * 0.2));
+    const ox = this.gaze.x * maxShift * scale;
+    const oy = this.gaze.y * maxShift * scale;
+    ctx.save();
+    ctx.fillStyle = 'rgba(46, 16, 20, 0.95)';
+    const eyes = [[eye.lx, eye.ly], [eye.rx, eye.ry]];
+    for (let i = 0; i < eyes.length; i++) {
+      ctx.beginPath();
+      ctx.arc(dx + eyes[i][0] * scale + ox, dy + eyes[i][1] * scale + oy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 瞳孔上的小高光，让眼神有神
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    const hr = Math.max(0.8, r * 0.28);
+    for (let i = 0; i < eyes.length; i++) {
+      ctx.beginPath();
+      ctx.arc(
+        dx + eyes[i][0] * scale + ox - r * 0.35,
+        dy + eyes[i][1] * scale + oy - r * 0.35,
+        hr, 0, Math.PI * 2
+      );
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -408,4 +463,112 @@ class SpriteEngine {
     ctx.closePath();
     return this.ctx;
   }
+}
+
+// ===== 眼神跟随：红瞳检测 =====
+// 加载精灵后扫描每帧头部区域（帧高 18%~37%）的偏红像素，
+// 连通域配对定位双眼。检测不到（闭眼/侧脸/瞳色非红）该帧返回 null，
+// 瞳孔就不画 —— 天然兼容眨眼和睡觉。仅对偏红瞳色有效（isla 红瞳）。
+const EYE_SCAN_TOP = 0.18;
+const EYE_SCAN_BOTTOM = 0.37;
+const EYE_MIN_PX = 25;   // 连通域像素数范围
+const EYE_MAX_PX = 1200;
+const EYE_MIN_W = 8;     // 连通域宽高范围（过滤头发丝/胸结/纸屑等杂块）
+const EYE_MAX_W = 45;
+const EYE_MIN_H = 10;
+const EYE_MAX_H = 42;
+
+function isEyeRed(r, g, b, a) {
+  return a > 128 && r > 100 && r > g * 1.6 && r > b * 1.6;
+}
+
+function detectEyePairs(spriteCanvas, actionId) {
+  const action = ACTIONS[actionId];
+  const frames = action ? action.frames : 6;
+  const fw = Math.round(spriteCanvas.width / frames);
+  const fh = spriteCanvas.height;
+  if (!fw || !fh) return [];
+  const ctx = spriteCanvas.getContext('2d');
+  const full = ctx.getImageData(0, 0, spriteCanvas.width, fh);
+  const d = full.data;
+  const y0 = Math.floor(fh * EYE_SCAN_TOP);
+  const y1 = Math.floor(fh * EYE_SCAN_BOTTOM);
+  const bandH = y1 - y0;
+  const result = [];
+  for (let f = 0; f < frames; f++) {
+    result.push(findEyePairInFrame(d, spriteCanvas.width, fw, f, y0, bandH));
+  }
+  return result;
+}
+
+function findEyePairInFrame(d, stripW, fw, frame, y0, bandH) {
+  const seen = new Uint8Array(fw * bandH);
+  const blobs = [];
+  for (let y = 0; y < bandH; y++) {
+    for (let x = 0; x < fw; x++) {
+      const idx = y * fw + x;
+      if (seen[idx]) continue;
+      const i = ((frame * fw + x) + (y0 + y) * stripW) * 4;
+      if (!isEyeRed(d[i], d[i + 1], d[i + 2], d[i + 3])) continue;
+      // 8 连通 BFS 收集一个连通域
+      let minX = x, maxX = x, minY = y, maxY = y, area = 0;
+      const stack = [[x, y]];
+      seen[idx] = 1;
+      while (stack.length) {
+        const p = stack.pop();
+        const cx = p[0], cy = p[1];
+        area++;
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = cx + dx, ny = cy + dy;
+            if (nx < 0 || nx >= fw || ny < 0 || ny >= bandH) continue;
+            const ni = ny * fw + nx;
+            if (seen[ni]) continue;
+            const j = ((frame * fw + nx) + (y0 + ny) * stripW) * 4;
+            if (isEyeRed(d[j], d[j + 1], d[j + 2], d[j + 3])) {
+              seen[ni] = 1;
+              stack.push([nx, ny]);
+            }
+          }
+        }
+      }
+      const bw = maxX - minX + 1;
+      const bh = maxY - minY + 1;
+      if (
+        area >= EYE_MIN_PX && area <= EYE_MAX_PX &&
+        bw >= EYE_MIN_W && bw <= EYE_MAX_W &&
+        bh >= EYE_MIN_H && bh <= EYE_MAX_H
+      ) {
+        blobs.push({ cx: (minX + maxX) / 2, cy: y0 + (minY + maxY) / 2, w: bw, h: bh, area: area });
+      }
+    }
+  }
+  // 配对：|dy|<=14 且 12<=dx<=85，取最靠上的一对（眼睛在胸结/腮红上方）
+  let best = null;
+  for (let i = 0; i < blobs.length; i++) {
+    for (let j = i + 1; j < blobs.length; j++) {
+      const a = blobs[i], b = blobs[j];
+      const dx = Math.abs(a.cx - b.cx);
+      const dy = Math.abs(a.cy - b.cy);
+      if (dx >= 12 && dx <= 85 && dy <= 14) {
+        const avgY = (a.cy + b.cy) / 2;
+        if (!best || avgY < best.avgY) best = { a: a, b: b, avgY: avgY };
+      }
+    }
+  }
+  if (!best) return null;
+  const left = best.a.cx < best.b.cx ? best.a : best.b;
+  const right = best.a.cx < best.b.cx ? best.b : best.a;
+  return {
+    lx: Math.round(left.cx),
+    ly: Math.round(left.cy),
+    rx: Math.round(right.cx),
+    ry: Math.round(right.cy),
+    size: Math.round((left.w + left.h + right.w + right.h) / 4),
+  };
 }
