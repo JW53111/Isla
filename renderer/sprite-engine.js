@@ -258,6 +258,13 @@ class SpriteEngine {
     }
     // 头部微动跟随：眼睛带路，身体 1~2px 缓慢朝鼠标方向挪（不倾斜、站直）
     dx += Math.round(this.headFollow.x * 2 * scale);
+    // 记录本次绘制几何（app.js 天气气泡等需要锚定头部位置）
+    const eye = this.eyeFrames && this.eyeFrames.actionId === action.id ? this.eyeFrames.frames[this.currentFrame] : null;
+    this.drawInfo = {
+      dx, dy, scale,
+      cx: dx + (action.frameWidth / 2) * scale,
+      eyeY: eye ? eye.ly : null,
+    };
     ctx.drawImage(
       this.spriteImage,
       sx, 0,

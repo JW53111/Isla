@@ -44,6 +44,10 @@ const SULK_POKE_CHANCE = 0.35;      // 被戳时 35% 生闷气
 let sulkHoldTimer = null;
 let lastSulkAt = 0;
 
+// 日期天气播报：切到 date-weather 时拉实时天气（主进程缓存 10 分钟）
+let weatherInfo = null;
+let weatherFetchAt = 0;
+
 // Head-poke streak
 let pokeStreak = 0;
 let lastPokeAt = 0;
@@ -330,6 +334,9 @@ function gameLoop(timestamp) {
 
   engine.render();
 
+  // 实时日期天气气泡（date-weather 动作时头顶显示）
+  if (currentActionId === 'date-weather') renderWeatherBubble();
+
   // Non-looping action completed → transition
   if (!engine.isPlaying && engine.currentAction) {
     handleActionComplete(engine.currentAction);
@@ -346,6 +353,7 @@ function switchAction(actionId, userTriggered = false) {
   currentActionId = actionId;
   isUserTriggered = userTriggered;
   if (actionId !== DEFAULT_ACTION_ID) drifting = false;
+  if (actionId === 'date-weather') requestWeather();
   engine.play(actionId);
   // Window size is STAGE-based and fixed across actions — no resize here
   // (keeps the existing "no jumping when switching actions" behavior)
@@ -395,6 +403,72 @@ function playSulk() {
   sulkHoldTimer = setTimeout(() => {
     if (currentActionId === 'sulk') switchAction(DEFAULT_ACTION_ID, false);
   }, SULK_HOLD_MS);
+}
+
+// 拉实时天气：主进程缓存 10 分钟；失败时 weatherInfo 保持 null（气泡只显示日期）
+async function requestWeather() {
+  if (!api || !api.getWeather) return;
+  if (Date.now() - weatherFetchAt < 10 * 60 * 1000) return;
+  weatherFetchAt = Date.now();
+  try {
+    weatherInfo = await api.getWeather();
+  } catch (e) {
+    weatherInfo = null;
+  }
+}
+
+// 天气代码 → 中文（WMO weather code）
+function weatherText(code) {
+  if (code === 0) return '晴';
+  if (code <= 2) return '多云';
+  if (code === 3) return '阴';
+  if (code === 45 || code === 48) return '雾';
+  if (code >= 51 && code <= 57) return '毛毛雨';
+  if (code >= 61 && code <= 67) return '雨';
+  if (code >= 71 && code <= 77) return '雪';
+  if (code >= 80 && code <= 82) return '阵雨';
+  if (code >= 95) return '雷雨';
+  return '';
+}
+
+// 实时日期天气气泡：锚定头顶正上方（引擎上帧绘制几何 + 眼睛位置推头顶），
+// 两行：日期+星期 / 城市 天气 温度
+function renderWeatherBubble() {
+  const d = engine.drawInfo;
+  if (!d || engine.loadedActionId !== 'date-weather') return;
+  const now = new Date();
+  const line1 = (now.getMonth() + 1) + '月' + now.getDate() + '日 周' + '日一二三四五六'[now.getDay()];
+  let line2 = api ? '天气获取中…' : '';
+  if (weatherInfo) {
+    const text = weatherText(weatherInfo.code);
+    line2 = weatherInfo.city + (text ? ' ' + text : '') + ' ' + weatherInfo.temp + '°C';
+  }
+  if (!line2) return;
+
+  const ctx = engine.ctx;
+  ctx.save();
+  ctx.font = '10px "Microsoft YaHei", "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const tw = Math.max(ctx.measureText(line1).width, ctx.measureText(line2).width);
+  const padX = 7;
+  const lineH = 13;
+  const bw = tw + padX * 2;
+  const bh = lineH * 2 + 4;
+  // 头顶 = 眼睛上方约 38 精灵像素；气泡底边贴在头顶上方 2px
+  const headTop = d.dy + ((d.eyeY != null ? d.eyeY : 110) - 38) * d.scale;
+  const bx = d.cx - bw / 2;
+  const by = Math.max(0, headTop - bh - 2);
+  engine.roundRect(ctx, bx, by, bw, bh, 6);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(80, 80, 80, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = '#3a3a3a';
+  ctx.fillText(line1, d.cx, by + lineH / 2 + 2);
+  ctx.fillText(line2, d.cx, by + lineH + lineH / 2 + 2);
+  ctx.restore();
 }
 
 // Start idle drift: 3-6 s at 8-20 px/s in a random (mostly horizontal) direction

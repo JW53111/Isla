@@ -541,6 +541,35 @@ ipcMain.handle('capabilities-get', function () {
   };
 });
 
+// ---- 实时日期天气（date-weather 动作播报用）----
+// 主进程拉取：ip-api.com 定位 + open-meteo.com 取当前天气（都无需 key），
+// 缓存 10 分钟；任一环节失败返回 null，渲染层只显示日期
+let weatherCache = { at: 0, data: null };
+async function fetchWeather() {
+  const now = Date.now();
+  if (now - weatherCache.at < 10 * 60 * 1000) return weatherCache.data;
+  try {
+    const locResp = await fetch('http://ip-api.com/json/?lang=zh-CN', { signal: AbortSignal.timeout(6000) });
+    const loc = await locResp.json();
+    if (loc.status !== 'success' || !loc.lat || !loc.lon) throw new Error('ip-api 定位失败');
+    const city = (loc.city || loc.regionName || '').trim(); // 气泡空间小，只取城市名（直辖市等 city 为空时退回地区名）
+    const wResp = await fetch(
+      'https://api.open-meteo.com/v1/forecast?latitude=' + loc.lat + '&longitude=' + loc.lon +
+        '&current=temperature_2m,weather_code&timezone=auto',
+      { signal: AbortSignal.timeout(6000) }
+    );
+    const w = await wResp.json();
+    const cur = w && w.current;
+    if (!cur || typeof cur.temperature_2m !== 'number') throw new Error('天气数据缺失');
+    weatherCache = { at: now, data: { city: city.trim(), temp: Math.round(cur.temperature_2m), code: cur.weather_code } };
+    return weatherCache.data;
+  } catch (e) {
+    console.warn('[pet] 天气获取失败：', e && e.message ? e.message : e);
+    return null;
+  }
+}
+ipcMain.handle('weather-get', fetchWeather);
+
 ipcMain.on('set-opacity', function (_event, v) {
   setOpacity(v);
 });
@@ -631,14 +660,15 @@ function generatePackageJson(appName: string, appId: string) {
       appId,
       productName: appName,
       directories: { output: 'dist' },
-      files: ['main.js', 'preload.js', 'renderer/**/*', 'sprites/**/*', 'assets/icon.png', 'assets/icon.icns'],
+      files: ['main.js', 'preload.js', 'renderer/**/*', 'sprites/**/*', 'assets/icon.png', 'assets/icon.ico', 'assets/icon.icns'],
       asarUnpack: ['node_modules/uiohook-napi/**'],
       npmRebuild: false,
       mac: { target: ['dmg'], icon: 'assets/icon.icns', category: 'public.app-category.entertainment' },
-      // signAndEditExecutable: false — 跳过 winCodeSign（exe 图标/元数据编辑）。
-      // winCodeSign 需要从 GitHub 下载且解压需符号链接权限，国内网络/无开发者模式必失败。
-      // 代价：exe 文件图标为默认 Electron 图标；托盘/任务栏图标来自 assets/icon.png 不受影响。
-      win: { target: ['dir'], icon: 'assets/icon.png', signAndEditExecutable: false },
+      // signAndEditExecutable: false — 两种写 exe 图标的路径都不可行：
+      // 1) 开启它时 winCodeSign 解压在无符号链接权限的 Windows 上必失败（darwin .dylib 软链）
+      // 2) 手动 rcedit（2019 版）处理不了 Electron 大 exe，会把 176MB 文件写坏成 3.4GB
+      // 托盘图标来自 assets/icon.png 不受影响；assets/icon.ico 保留给桌面快捷方式图标用。
+      win: { target: ['dir'], icon: 'assets/icon.ico', signAndEditExecutable: false },
     },
     author: 'DeskToy',
     devDependencies: { electron: '28.3.3', 'electron-builder': '^25.0.0' },
@@ -676,6 +706,33 @@ async function removeGreenScreenForIcon(referencePath: string) {
   return sharp(raw, { raw: { width, height, channels: 4 } }).png().toBuffer();
 }
 
+// ICO 容器（内嵌 PNG，Vista+ 支持）：exe 文件图标写入需要 .ico
+async function generateIco(iconPngPath: string): Promise<Buffer> {
+  const sizes = [16, 32, 48, 64, 128, 256];
+  const pngs: Buffer[] = [];
+  for (const size of sizes) {
+    pngs.push(await sharp(iconPngPath).resize(size, size).png().toBuffer());
+  }
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type: icon
+  header.writeUInt16LE(sizes.length, 4);
+  let offset = 6 + 16 * sizes.length;
+  const parts: Buffer[] = [header];
+  for (let i = 0; i < sizes.length; i++) {
+    const e = Buffer.alloc(16);
+    e.writeUInt8(sizes[i] >= 256 ? 0 : sizes[i], 0); // 宽（0 = 256）
+    e.writeUInt8(sizes[i] >= 256 ? 0 : sizes[i], 1); // 高
+    e.writeUInt16LE(1, 4); // color planes
+    e.writeUInt16LE(32, 6); // bpp
+    e.writeUInt32LE(pngs[i].length, 8);
+    e.writeUInt32LE(offset, 12);
+    parts.push(e, pngs[i]);
+    offset += pngs[i].length;
+  }
+  return Buffer.concat(parts);
+}
+
 async function generateIconAssets(referencePath: string, assetsDir: string) {
   const iconPngPath = path.join(assetsDir, 'icon.png');
   const iconsetDir = path.join(assetsDir, 'icon.iconset');
@@ -686,6 +743,9 @@ async function generateIconAssets(referencePath: string, assetsDir: string) {
     .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toFile(iconPngPath);
+
+  // exe 文件图标（Windows）：同源 PNG 转多尺寸 ICO
+  await fs.writeFile(path.join(assetsDir, 'icon.ico'), await generateIco(iconPngPath));
 
   try {
     await fs.mkdir(iconsetDir, { recursive: true });

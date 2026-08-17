@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 系统
   getCapabilities: () => ipcRenderer.invoke('capabilities-get'),
+  // 实时日期天气（date-weather 动作播报用；主进程拉取并缓存 10 分钟）
+  getWeather: () => ipcRenderer.invoke('weather-get'),
   setOpacity: (v) => ipcRenderer.send('set-opacity', v),
   quit: () => ipcRenderer.send('quit-app'),
 });
