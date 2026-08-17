@@ -48,9 +48,9 @@ function generateActionsJs(actions: ActionDefinition[]): string {
     )
     .join(',\n');
 
-  // 语义动作（typing=键盘镜像、sleep=双击/自动睡觉、poke-react=戳一戳/点击反应）
+  // 语义动作（typing=键盘镜像、sleep=双击/自动睡觉、poke-react=戳一戳/点击反应、sulk=被戳随机/长时间不理）
   // 不参与单击循环切换：它们各有专属触发方式，混进循环里会让用户困惑
-  const SEMANTIC_ACTIONS = ['idle', 'typing', 'sleep', 'poke-react'];
+  const SEMANTIC_ACTIONS = ['idle', 'typing', 'sleep', 'poke-react', 'sulk'];
 
   return `// DISPLAY_SCALE is only a fallback for environments without the Electron
 // main process (e.g. plain browser preview). In the real app the pet auto-fits

@@ -25,6 +25,15 @@ class SpriteEngine {
     this.gaze = { x: 0, y: 0 }; // smoothed gaze offset, normalized -1..1
     this.gazeTarget = { x: 0, y: 0 };
 
+    // Live2D 化动态：随机眨眼 / 头部微动跟随 / 重心稳定（帧切换一律硬切，不叠旧帧）
+    this.blinkAt = 2000 + Math.random() * 4000; // 下次眨眼倒计时（间隔 3~7s）
+    this.blinkT = -1;                            // -1=不在眨眼，0~130ms 为一次眨眼
+    this.headFollow = { x: 0, y: 0 };            // 头部缓慢跟随注视方向（300ms）
+    this.frameAnchors = null;                    // 每帧上身 x 质心（重心稳定用）
+    this.anchorX = 0;                            // 平滑后的质心（精灵像素坐标）
+    this.loadedActionId = null;                  // 已加载精灵所属动作（切换瞬间不画错帧）
+    this.gazeAlpha = 1;                          // 瞳孔透明度（眼睛出现/消失帧间渐隐渐显）
+
     // Placeholder rendering (while waiting for real sprite sheets)
     this.usePlaceholder = true;
   }
@@ -60,6 +69,10 @@ class SpriteEngine {
         this.usePlaceholder = false;
         // 眼神跟随：检测每帧红瞳位置（闭眼/侧脸帧检测不到 -> 不画瞳孔，天然眨眼）
         this.eyeFrames = { actionId: actionId, frames: detectEyePairs(this.spriteImage, actionId) };
+        // 重心稳定：每帧上身 x 质心，帧间平滑对齐（治帧间左右弹跳）
+        this.frameAnchors = computeFrameAnchors(this.spriteImage, actionId);
+        this.anchorX = this.frameAnchors.length ? this.frameAnchors[0] : 0;
+        this.loadedActionId = actionId;
         resolve(this.spriteImage);
       };
       img.onerror = () => {
@@ -114,6 +127,10 @@ class SpriteEngine {
     this.currentFrame = 0;
     this.frameTimer = 0;
     this.isPlaying = true;
+    // 动作切换：所有帧切换一律硬切不叠旧帧（实测：任何叠旧帧的淡入都会重影闪，
+    // 硬切虽僵硬但不闪）；新精灵未加载前不启用重心稳定（旧 anchors 是新坐标，不能混用）
+    this.frameAnchors = null;
+    this.anchorX = 0;
 
     // Try to load the sprite sheet
     const imagePath = `../sprites/${actionId}.png`;
@@ -131,6 +148,41 @@ class SpriteEngine {
     this.gaze.x += (this.gazeTarget.x - this.gaze.x) * k;
     this.gaze.y += (this.gazeTarget.y - this.gaze.y) * k;
 
+    // 瞳孔渐隐渐显：换向帧眼睛出现/消失时瞳孔 80ms 淡入淡出，不突然弹出
+    const hasEyes = !!(
+      this.eyeFrames &&
+      this.eyeFrames.actionId === this.currentAction.id &&
+      this.eyeFrames.frames[this.currentFrame]
+    );
+    const kg = Math.min(1, dt / 80);
+    this.gazeAlpha += ((hasEyes ? 1 : 0) - this.gazeAlpha) * kg;
+
+    // 头部微动跟随（300ms）：眼睛带路、身体慢一步跟上，站直不倾斜
+    const kh = Math.min(1, dt / 300);
+    this.headFollow.x += (this.gaze.x - this.headFollow.x) * kh;
+    this.headFollow.y += (this.gaze.y - this.headFollow.y) * kh;
+
+    // 随机眨眼：3~7s 一次，一次 130ms（闭 40ms / 保持 50ms / 睁 40ms）
+    if (this.blinkT >= 0) {
+      this.blinkT += dt;
+      if (this.blinkT >= 130) this.blinkT = -1;
+    } else {
+      this.blinkAt -= dt;
+      if (this.blinkAt <= 0) {
+        this.blinkT = 0;
+        this.blinkAt = 3000 + Math.random() * 4000;
+      }
+    }
+
+    // 重心稳定：平滑跟随当前帧上身质心（150ms），渲染时按差值补横移
+    if (this.frameAnchors && this.frameAnchors.length) {
+      const target = this.frameAnchors[this.currentFrame];
+      if (target != null) {
+        const ka = Math.min(1, dt / 150);
+        this.anchorX += (target - this.anchorX) * ka;
+      }
+    }
+
     const action = this.currentAction;
     // 全局放慢 1.5 倍：默认 2fps 动作节奏过快，看着烦躁
     const frameDuration = (1000 / action.fps) * 1.5;
@@ -146,6 +198,7 @@ class SpriteEngine {
   advanceFrame() {
     const action = this.currentAction;
     const prevFrame = this.currentFrame;
+    // 帧切换直接硬切（叠旧帧的淡入会产生重影闪烁，硬切观感最干净）
 
     if (this.currentFrame < action.frames - 1) {
       this.currentFrame++;
@@ -184,6 +237,8 @@ class SpriteEngine {
   }
 
   renderSprite(ctx, action) {
+    // 新动作精灵未加载完成时不画（避免用旧精灵按新帧宽切出错帧闪现）
+    if (this.loadedActionId !== action.id) return;
     const sx = this.currentFrame * action.frameWidth;
     ctx.save();
     ctx.beginPath();
@@ -194,8 +249,15 @@ class SpriteEngine {
     const scale = Math.min(this.displayWidth / stageWidth, this.displayHeight / stageHeight);
     const dw = Math.round(action.frameWidth * scale);
     const dh = Math.round(action.frameHeight * scale);
-    const dx = Math.round((this.displayWidth - dw) / 2);
+    let dx = Math.round((this.displayWidth - dw) / 2);
     const dy = Math.round(this.displayHeight - dh);
+    // 重心稳定：帧间上身质心平滑对齐（横向补差，底对齐不动、脚不滑）
+    if (this.frameAnchors && this.frameAnchors.length) {
+      const cur = this.frameAnchors[this.currentFrame];
+      if (cur != null) dx += Math.round((this.anchorX - cur) * scale);
+    }
+    // 头部微动跟随：眼睛带路，身体 1~2px 缓慢朝鼠标方向挪（不倾斜、站直）
+    dx += Math.round(this.headFollow.x * 2 * scale);
     ctx.drawImage(
       this.spriteImage,
       sx, 0,
@@ -205,7 +267,7 @@ class SpriteEngine {
     );
     ctx.restore();
 
-    // 眼神跟随：在画的眼珠上叠一层瞳孔，随鼠标方向偏移
+    // 眼神跟随：在画的眼珠上叠一层瞳孔，随鼠标方向偏移；眨眼时画闭眼线
     this.renderGaze(ctx, action, dx, dy, scale);
   }
 
@@ -220,13 +282,19 @@ class SpriteEngine {
     if (!this.eyeFrames || this.eyeFrames.actionId !== action.id) return;
     const eye = this.eyeFrames.frames[this.currentFrame];
     if (!eye) return;
+    // 眨眼期间画闭眼线，不画瞳孔
+    if (this.blinkT >= 0) {
+      this.renderBlink(ctx, eye, dx, dy, scale);
+      return;
+    }
     // 瞳孔半径约为眼睛大小的 30%，偏移上限 20%（不跑出虹膜）
     const r = Math.min(6, Math.max(2.5, eye.size * 0.3)) * scale;
     const maxShift = Math.min(4.5, Math.max(2, eye.size * 0.2));
     const ox = this.gaze.x * maxShift * scale;
     const oy = this.gaze.y * maxShift * scale;
     ctx.save();
-    ctx.fillStyle = 'rgba(46, 16, 20, 0.95)';
+    ctx.globalAlpha = Math.max(0.001, this.gazeAlpha);
+    ctx.fillStyle = 'rgba(22, 16, 18, 0.98)';
     const eyes = [[eye.lx, eye.ly], [eye.rx, eye.ry]];
     for (let i = 0; i < eyes.length; i++) {
       ctx.beginPath();
@@ -244,6 +312,29 @@ class SpriteEngine {
         hr, 0, Math.PI * 2
       );
       ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 随机眨眼：在检测到的眼睛位置画向下微弧的闭眼线，
+  // α 按三阶段变化（闭 40ms 渐显 / 保持 50ms / 睁 40ms 渐隐）
+  renderBlink(ctx, eye, dx, dy, scale) {
+    const phase = this.blinkT;
+    const alpha = phase < 40 ? phase / 40 : phase < 90 ? 1 : Math.max(0, 1 - (phase - 90) / 40);
+    if (alpha <= 0) return;
+    const ew = Math.max(6, eye.size * 1.5) * scale;   // 眼宽约 size*1.5
+    const r = Math.max(2.5, eye.size * 0.3) * scale;  // 弧线垂度参考瞳孔半径
+    ctx.save();
+    ctx.strokeStyle = `rgba(22, 16, 18, ${(0.9 * alpha).toFixed(3)})`;
+    ctx.lineWidth = Math.max(1.2, r * 0.4);
+    ctx.lineCap = 'round';
+    for (const [ex, ey] of [[eye.lx, eye.ly], [eye.rx, eye.ry]]) {
+      const x = dx + ex * scale;
+      const y = dy + ey * scale;
+      ctx.beginPath();
+      ctx.moveTo(x - ew / 2, y);
+      ctx.quadraticCurveTo(x, y + r * 0.5, x + ew / 2, y);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -571,4 +662,34 @@ function findEyePairInFrame(d, stripW, fw, frame, y0, bandH) {
     ry: Math.round(right.cy),
     size: Math.round((left.w + left.h + right.w + right.h) / 4),
   };
+}
+
+// ===== 重心稳定：每帧上身 x 质心 =====
+// 姿势变化会让每帧身体在帧内的横向位置小幅跳动；取 y∈[0.2h,0.8h]
+// 非透明像素的 x 质心，渲染时平滑对齐，帧间不再左右弹
+function computeFrameAnchors(spriteCanvas, actionId) {
+  const action = ACTIONS[actionId];
+  const frames = action ? action.frames : 6;
+  const fw = Math.round(spriteCanvas.width / frames);
+  const fh = spriteCanvas.height;
+  if (!fw || !fh) return [];
+  const ctx = spriteCanvas.getContext('2d');
+  const d = ctx.getImageData(0, 0, spriteCanvas.width, fh).data;
+  const y0 = Math.floor(fh * 0.2);
+  const y1 = Math.floor(fh * 0.8);
+  const anchors = [];
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    let n = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = f * fw; x < (f + 1) * fw; x++) {
+        if (d[(y * spriteCanvas.width + x) * 4 + 3] > 0) {
+          sum += x - f * fw;
+          n++;
+        }
+      }
+    }
+    anchors.push(n > 0 ? sum / n : null);
+  }
+  return anchors;
 }

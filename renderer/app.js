@@ -37,6 +37,13 @@ let clickWasHead = false;
 // Typing mirror: hold typing action while keys keep coming, back to idle 1.5 s after
 let typingHoldTimer = null;
 
+// 生闷气（sulk）：被戳时随机触发 + 长时间不理她时自己生闷气
+const SULK_IDLE_MS = 3 * 60 * 1000; // 无交互 3 分钟
+const SULK_HOLD_MS = 5000;          // 生 5 秒闷气自己回来
+const SULK_POKE_CHANCE = 0.35;      // 被戳时 35% 生闷气
+let sulkHoldTimer = null;
+let lastSulkAt = 0;
+
 // Head-poke streak
 let pokeStreak = 0;
 let lastPokeAt = 0;
@@ -160,7 +167,12 @@ async function init() {
           if (currentActionId === 'typing') switchAction(DEFAULT_ACTION_ID, false);
         }, 1500);
       } else if (ev.type === 'mouse-down' && ACTIONS['poke-react']) {
-        switchAction('poke-react', false);
+        // 被戳：35% 几率生闷气（生暗气），否则撒娇
+        if (ACTIONS['sulk'] && Math.random() < SULK_POKE_CHANCE) {
+          playSulk();
+        } else {
+          switchAction('poke-react', false);
+        }
       }
     });
 
@@ -266,6 +278,16 @@ function gameLoop(timestamp) {
     switchAction('sleep', false);
   }
 
+  // 长时间不理她 → 自己生闷气（3 分钟一次；10 分钟自动睡觉优先接管）
+  if (
+    currentActionId === DEFAULT_ACTION_ID &&
+    !isDragging &&
+    Date.now() - lastInteractionAt > SULK_IDLE_MS &&
+    Date.now() - lastSulkAt > SULK_IDLE_MS
+  ) {
+    playSulk();
+  }
+
   // Idle drift — window slowly wanders, clamped to the work area
   if (drifting) {
     if (currentActionId === DEFAULT_ACTION_ID && !isUserTriggered && !isDragging) {
@@ -284,9 +306,26 @@ function gameLoop(timestamp) {
     startDrift();
   }
 
-  // Breathing only (CSS transform, pivot at the feet) — 视线倾斜已取消，保持站直
+  // Live2D 式慢呼吸（只 scaleY，transform-origin 在脚底 = 脚不动、头自然起伏）：
+  // 3.6s 周期 = 吸气 1s → 呼气 2s → 停留 0.6s，睡觉时起伏更明显；不倾斜、站直
   breatheT += dt;
-  const breatheScale = 1 + Math.sin((breatheT / 900) * Math.PI * 2) * (currentActionId === 'sleep' ? 0.008 : 0.004);
+  const amp = currentActionId === 'sleep' ? 0.014 : 0.006;
+  const phase = (breatheT % 3600) / 3600;
+  let v;
+  if (phase < 0.28) {
+    // 吸气 1s：缓入缓出 0 -> 1
+    const t = phase / 0.28;
+    v = t * t * (3 - 2 * t);
+  } else if (phase < 0.83) {
+    // 呼气 2s：缓入缓出 1 -> 0
+    const t = (phase - 0.28) / 0.55;
+    v = 1 - t * t * (3 - 2 * t);
+  } else {
+    v = 0; // 停留 0.6s
+  }
+  // 次谐波小起伏，曲线不那么机械
+  v += 0.15 * Math.sin((breatheT / 1700) * Math.PI * 2);
+  const breatheScale = 1 + v * amp;
   canvas.style.transform = `scaleY(${breatheScale.toFixed(4)})`;
 
   engine.render();
@@ -345,6 +384,17 @@ function pokeHead() {
   } else if (ACTIONS['poke-react']) {
     switchAction('poke-react', false);
   }
+}
+
+// 生暗气：切到 sulk 动作，几秒后自己回到待机（期间被敲键盘/点击打断则不回切）
+function playSulk() {
+  if (!ACTIONS['sulk']) return;
+  lastSulkAt = Date.now();
+  clearTimeout(sulkHoldTimer);
+  switchAction('sulk', false);
+  sulkHoldTimer = setTimeout(() => {
+    if (currentActionId === 'sulk') switchAction(DEFAULT_ACTION_ID, false);
+  }, SULK_HOLD_MS);
 }
 
 // Start idle drift: 3-6 s at 8-20 px/s in a random (mostly horizontal) direction
