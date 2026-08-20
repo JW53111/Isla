@@ -170,12 +170,15 @@ async function init() {
         typingHoldTimer = setTimeout(() => {
           if (currentActionId === 'typing') switchAction(DEFAULT_ACTION_ID, false);
         }, 1500);
-      } else if (ev.type === 'mouse-down' && ACTIONS['poke-react']) {
-        // 被戳：35% 几率生闷气（生暗气），否则撒娇
-        if (ACTIONS['sulk'] && Math.random() < SULK_POKE_CHANCE) {
-          playSulk();
-        } else {
-          switchAction('poke-react', false);
+      } else if (ev.type === 'mouse-down') {
+        // 点击别处不再弹「戳一戳撒娇」：把她从自动动作（打字/撒娇/生闷气）拉回陪伴待机；
+        // 睡觉不打扰（戳她本人才会醒），用户主动切的动作（右键菜单/单击循环）不打断
+        if (
+          currentActionId !== 'sleep' &&
+          currentActionId !== DEFAULT_ACTION_ID &&
+          !isUserTriggered
+        ) {
+          switchAction(DEFAULT_ACTION_ID, false);
         }
       }
     });
@@ -389,6 +392,8 @@ function pokeHead() {
     pokeStreak = 0;
     if (ACTIONS['cheer-up']) switchAction('cheer-up', false);
     else if (ACTIONS['poke-react']) switchAction('poke-react', false);
+  } else if (ACTIONS['sulk'] && Math.random() < SULK_POKE_CHANCE) {
+    playSulk(); // 戳她本人：35% 几率背过身生闷气
   } else if (ACTIONS['poke-react']) {
     switchAction('poke-react', false);
   }
