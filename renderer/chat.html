@@ -1,46 +1,108 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>和桌宠聊天</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Isla AI 工作台</title>
   <link rel="stylesheet" href="chat.css">
 </head>
 <body>
-  <div id="chat-card">
-    <div id="chat-header">
-      <span id="chat-title">和 <b id="pet-name">她</b> 聊天</span>
-      <div id="header-buttons">
-        <button id="btn-settings" title="API 设置">⚙</button>
-        <button id="btn-clear" title="清空对话">🗑</button>
-        <button id="btn-close" title="关闭">✕</button>
+<main id="app">
+  <header>
+    <b id="app-title">AI 工作台</b>
+    <div>
+      <button id="btn-sessions">会话</button>
+      <button id="btn-tools">工具</button>
+      <button id="btn-skills">技能</button>
+      <button id="btn-settings">设置</button>
+      <button id="btn-close">关闭</button>
+    </div>
+  </header>
+
+  <section id="panel-sessions" class="panel hidden">
+    <div class="row">
+      <select id="sessions"></select>
+      <button id="new-session">新建</button>
+      <button id="del-session">删除</button>
+    </div>
+    <h4>SOUL.md 人设（工作空间根目录）</h4>
+    <textarea id="soul" rows="6"></textarea>
+    <div class="row">
+      <button id="save-soul">保存人设</button>
+      <button id="memory-btn">查看记忆</button>
+      <button id="memory-add-btn">记住当前对话要点</button>
+    </div>
+    <pre id="sessions-output"></pre>
+  </section>
+
+  <section id="panel-tools" class="panel hidden">
+    <div class="tool-card">
+      <h4>待办列表</h4>
+      <div class="row">
+        <input id="todo-title" placeholder="要做的事…">
+        <button id="todo-add">添加</button>
       </div>
+      <ul id="todo-list" class="item-list"></ul>
     </div>
-
-    <div id="settings-panel" class="hidden">
-      <label>API 地址
-        <input id="cfg-base-url" type="text" placeholder="https://api.openai.com/v1">
-      </label>
-      <label>API Key
-        <input id="cfg-api-key" type="password" placeholder="sk-...">
-      </label>
-      <label>模型
-        <input id="cfg-model" type="text" placeholder="gpt-4o-mini">
-      </label>
-      <div id="settings-actions">
-        <button id="btn-save-settings">保存设置</button>
-        <span id="settings-hint" class="hint"></span>
+    <div class="tool-card">
+      <h4>番茄钟</h4>
+      <div class="row pomo-row">
+        <span id="pomo-clock">25:00</span>
+        <input id="pomo-duration" type="number" min="1" max="180" value="25"> 分钟
       </div>
-      <p class="hint">Key 只保存在本机（%APPDATA% 下的 api-config.json），不会随安装包分享。</p>
+      <div class="row">
+        <button id="pomo-start">开始</button>
+        <button id="pomo-pause">暂停</button>
+        <button id="pomo-resume">继续</button>
+        <button id="pomo-stop">停止</button>
+        <button id="pomo-complete">完成一次</button>
+      </div>
+      <div class="hint" id="pomo-info">今日完成：0 次</div>
     </div>
-
-    <div id="chat-messages"></div>
-
-    <div id="chat-input-row">
-      <input id="chat-input" type="text" placeholder="和她说点什么…（Enter 发送）" autocomplete="off">
-      <button id="btn-send">发送</button>
+    <div class="tool-card">
+      <h4>倒数日</h4>
+      <div class="row">
+        <input id="cd-name" placeholder="名称（如：发工资）">
+        <input id="cd-date" type="date">
+        <button id="cd-add">添加</button>
+      </div>
+      <ul id="cd-list" class="item-list"></ul>
     </div>
-  </div>
-  <script src="chat.js"></script>
+  </section>
+
+  <section id="panel-skills" class="panel hidden">
+    <h4>技能（全局 ~/.isla/skills 与工作空间 .isla/skills，勾选后注入 AI）</h4>
+    <ul id="skill-list" class="item-list"></ul>
+    <pre id="skill-output"></pre>
+  </section>
+
+  <section id="panel-settings" class="panel hidden">
+    <label>API 地址
+      <input id="base-url" placeholder="https://api.openai.com/v1">
+    </label>
+    <label>API Key
+      <input id="api-key" type="password" placeholder="sk-...">
+    </label>
+    <label>模型
+      <input id="model" placeholder="gpt-4o-mini">
+    </label>
+    <label>系统提示词（留空则用 SOUL.md）
+      <textarea id="system-prompt" rows="3"></textarea>
+    </label>
+    <label class="inline"><input id="memory-enabled" type="checkbox"> 注入持久记忆</label>
+    <label class="inline"><input id="skills-enabled" type="checkbox"> 注入技能说明</label>
+    <button id="save-settings">保存设置</button>
+  </section>
+
+  <section id="messages" title="可拖入文件作为附件"></section>
+  <div id="attachments"></div>
+  <form id="composer">
+    <label title="添加附件">＋<input id="files" type="file" multiple></label>
+    <input id="prompt" placeholder="和桌宠说点什么…（支持拖入文件）">
+    <button>发送</button>
+    <button id="btn-stop" type="button" hidden>停止</button>
+  </form>
+</main>
+<script src="chat.js"></script>
 </body>
 </html>

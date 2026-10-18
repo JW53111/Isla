@@ -273,10 +273,13 @@ scripts/repack-sprite-safe.ts        # 安全切片 + 绿幕清理
 scripts/export-pet.ts                # 导出并打包 Electron 应用
 
 preload.js                           # Electron 运行时
+runtime.js                           # Agent：对话循环、工具调用、记忆与技能
+templates/main.js                    # 桌宠主进程模板（AI 工作台 IPC）
 renderer/index.html
 renderer/style.css
 renderer/sprite-engine.js
 renderer/app.js
+renderer/chat.html / chat.css / chat.js # AI 工作台
 
 output/                              # 每只桌宠的工作区
 

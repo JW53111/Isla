@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDisplayChanged: (callback) => {
     ipcRenderer.on('display-config-changed', (_event, d) => callback(d));
   },
+  // 桌宠事件：番茄钟完成 / 系统通知等
+  onPetEvent: (callback) => {
+    ipcRenderer.on('pet-event', (_event, ev) => callback(ev));
+  },
 
   // 系统
   getCapabilities: () => ipcRenderer.invoke('capabilities-get'),
@@ -38,4 +42,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getWeather: () => ipcRenderer.invoke('weather-get'),
   setOpacity: (v) => ipcRenderer.send('set-opacity', v),
   quit: () => ipcRenderer.send('quit-app'),
+  openAiWindow: () => ipcRenderer.send('open-ai-window'),
+  notify: (opts) => ipcRenderer.send('notify', opts || {}),
+
+  // ---- AI 工作台 ----
+  ai: {
+    getSettings: () => ipcRenderer.invoke('ai-settings-get'),
+    setSettings: (patch) => ipcRenderer.invoke('ai-settings-set', patch),
+    listSessions: () => ipcRenderer.invoke('ai-sessions-list'),
+    getSession: (id) => ipcRenderer.invoke('ai-session-get', id),
+    saveSession: (session) => ipcRenderer.invoke('ai-session-save', session),
+    deleteSession: (id) => ipcRenderer.invoke('ai-session-delete', id),
+    getSoul: () => ipcRenderer.invoke('ai-soul-get'),
+    setSoul: (content) => ipcRenderer.invoke('ai-soul-set', content),
+    listSkills: () => ipcRenderer.invoke('ai-skills-list'),
+    getSkill: (name) => ipcRenderer.invoke('ai-skill-get', name),
+    saveAttachment: (name, mediaType, dataBase64) => ipcRenderer.invoke('ai-attachment-save', name, mediaType, dataBase64),
+    runTool: (tool, action, params) => ipcRenderer.invoke('ai-tool-run', tool, action, params),
+    listMemory: () => ipcRenderer.invoke('ai-memory-list'),
+    addMemory: (content) => ipcRenderer.invoke('ai-memory-add', content),
+    // 流式对话：sendChat 发出请求，onChatEvent 收增量事件（chunk/tool/done/error），返回取消订阅函数
+    sendChat: (payload) => ipcRenderer.send('ai-chat-send', payload),
+    cancelChat: (requestId) => ipcRenderer.send('ai-chat-cancel', requestId),
+    onChatEvent: (callback) => {
+      const handler = (_event, ev) => callback(ev);
+      ipcRenderer.on('ai-chat-event', handler);
+      return () => ipcRenderer.removeListener('ai-chat-event', handler);
+    },
+  },
 });

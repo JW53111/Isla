@@ -187,6 +187,15 @@ async function init() {
     api.onPointerMove(({ dx, dy }) => {
       updateGazeTarget(dx, dy);
     });
+
+    // AI 事件：番茄钟完成等 → 切「消息提醒」动作
+    api.onPetEvent((ev) => {
+      if (!ev) return;
+      if (ev.type === 'pomodoro-done' && ACTIONS['new-message']) {
+        markInteraction();
+        switchAction('new-message', true);
+      }
+    });
   } else {
     // 无主进程（纯浏览器预览）：窗口内 mousemove 兜底
     canvas.addEventListener('mousemove', (e) => {
