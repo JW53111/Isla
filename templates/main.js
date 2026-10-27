@@ -2,6 +2,8 @@
 const { app, BrowserWindow, ipcMain, Menu, screen, globalShortcut, Tray, nativeImage, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const crypto = require('crypto');
 const runtime = require('./runtime');
 
 // ---- baked constants ----
@@ -143,6 +145,7 @@ let petWindow = null;
 let chatWindow = null;
 let tray = null;
 const aiRequests = new Map();
+let petActionId = null;
 let lastDisplayKey = null;
 
 // Same formula as the renderer's — used only to pre-size the window at startup
@@ -472,6 +475,23 @@ ipcMain.on('move-window', function (_event, dx, dy, opts) {
   petWindow.setPosition(Math.round(nx), Math.round(ny));
 });
 
+ipcMain.handle('move-window-with-collision', function (_event, dx, dy) {
+  if (!petWindow || petWindow.isDestroyed()) return { hitX: false, hitY: false };
+  dx = Number(dx);
+  dy = Number(dy);
+  if (!isFinite(dx) || !isFinite(dy)) return { hitX: false, hitY: false };
+  const [x, y] = petWindow.getPosition();
+  const [w, h] = petWindow.getSize();
+  const targetX = x + dx;
+  const targetY = y + dy;
+  const bounded = clampToWorkArea({ x: targetX, y: targetY, width: w, height: h });
+  petWindow.setPosition(bounded.x, bounded.y);
+  return {
+    hitX: bounded.x !== Math.round(targetX),
+    hitY: bounded.y !== Math.round(targetY),
+  };
+});
+
 ipcMain.handle('get-display-config', function () {
   return currentDisplayConfig();
 });
@@ -491,6 +511,11 @@ ipcMain.handle('capabilities-get', function () {
     inputCapture: !!uiohook,
     opacity: settings.opacity,
   };
+});
+
+ipcMain.on('pet-action-state', function (event, actionId) {
+  if (!petWindow || event.sender.id !== petWindow.webContents.id) return;
+  if (typeof actionId === 'string' && HAS_ACTION[actionId]) petActionId = actionId;
 });
 
 // AI 工作空间 = 桌宠所在目录（打包后为 isla.exe 所在目录）：每个桌宠的会话/记忆/技能/附件/工具数据互相独立
@@ -522,7 +547,10 @@ ipcMain.on('ai-chat-send', function (event, payload) {
     }
   };
   runtime.askAi(workspaceRoot, p.prompt || '', p.attachments || [], p.history || [], emit, DEFAULT_PERSONA, controller.signal)
-    .then(function (res) { emit({ type: 'done', text: res.text }); })
+    .then(function (res) {
+      emit({ type: 'done', text: res.text });
+      sendPetEvent({ type: 'say', text: res.text });
+    })
     .catch(function (e) {
       if (controller.signal.aborted) emit({ type: 'cancelled' });
       else emit({ type: 'error', message: String(e && e.message ? e.message : e) });
@@ -542,8 +570,190 @@ function notifyPet(title, body, type) {
     petWindow.webContents.send('pet-event', { type: type || 'notify', title: title, body: body });
   }
 }
+function sendPetEvent(event) {
+  if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send('pet-event', event);
+}
 ipcMain.on('notify', function (_event, opts) { notifyPet((opts && opts.title) || '', (opts && opts.body) || '', opts && opts.type); });
 ipcMain.on('open-ai-window', createChatWindow);
+
+// Optional local bridge for AstrBot and other trusted local clients.
+// It is disabled unless ISLA_BRIDGE_TOKEN is explicitly configured.
+const bridgeToken = String(process.env.ISLA_BRIDGE_TOKEN || '');
+const bridgePort = Number(process.env.ISLA_BRIDGE_PORT || 43123);
+const bridgeQueues = new Map();
+const bridgeRate = new Map();
+let bridgeServer = null;
+
+function bridgeJson(res, status, value) {
+  const body = JSON.stringify(value);
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  res.end(body);
+}
+
+function bridgeAuthorized(req) {
+  const header = String(req.headers.authorization || '');
+  if (!header.startsWith('Bearer ')) return false;
+  const supplied = Buffer.from(header.slice(7));
+  const expected = Buffer.from(bridgeToken);
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
+
+function bridgeReadBody(req) {
+  return new Promise(function (resolve, reject) {
+    let body = '';
+    req.on('data', function (chunk) {
+      body += chunk;
+      if (Buffer.byteLength(body) > 32 * 1024) {
+        reject(new Error('请求体超过 32KB 限制'));
+        req.destroy();
+      }
+    });
+    req.on('end', function () {
+      if (!body) return resolve({});
+      try { resolve(JSON.parse(body)); } catch (e) { reject(new Error('请求体必须是合法 JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function bridgeRateLimited(req) {
+  const key = req.socket.remoteAddress || 'local';
+  const now = Date.now();
+  const entry = bridgeRate.get(key) || { start: now, count: 0 };
+  if (now - entry.start >= 60_000) { entry.start = now; entry.count = 0; }
+  entry.count += 1;
+  bridgeRate.set(key, entry);
+  if (bridgeRate.size > 32) {
+    for (const [address, record] of bridgeRate) if (now - record.start >= 60_000) bridgeRate.delete(address);
+  }
+  return entry.count > 30;
+}
+
+function bridgeSessionId(value) {
+  const id = String(value || '').trim();
+  if (!id || id.length > 120 || !/^[\w.:@-]+$/.test(id)) {
+    throw new Error('sessionId 必须是 1 到 120 位的字母、数字或 . : @ - _');
+  }
+  return 'bridge-' + id;
+}
+
+function queuedBridgeChat(sessionId, task) {
+  const previous = bridgeQueues.get(sessionId) || Promise.resolve();
+  const current = previous.catch(function () {}).then(task);
+  bridgeQueues.set(sessionId, current);
+  return current.finally(function () {
+    if (bridgeQueues.get(sessionId) === current) bridgeQueues.delete(sessionId);
+  });
+}
+
+async function bridgeChat(body) {
+  const sessionId = bridgeSessionId(body.sessionId);
+  const prompt = String(body.text || '').trim();
+  if (!prompt) throw new Error('text 不能为空');
+  if (prompt.length > 8000) throw new Error('text 不能超过 8000 字符');
+
+  return queuedBridgeChat(sessionId, async function () {
+    const session = runtime.loadSession(workspaceRoot, sessionId);
+    const history = (session.messages || []).filter(function (m) {
+      return m && (m.role === 'user' || m.role === 'assistant') && m.content;
+    }).slice(-40);
+    const result = await runtime.askAi(workspaceRoot, prompt, [], history, null, DEFAULT_PERSONA);
+    session.messages = history.concat([
+      { role: 'user', content: prompt, createdAt: Date.now() },
+      { role: 'assistant', content: result.text, createdAt: Date.now() },
+    ]);
+    runtime.saveSession(workspaceRoot, session);
+    sendPetEvent({ type: 'say', text: result.text });
+    return { sessionId: sessionId, text: result.text };
+  });
+}
+
+async function handleBridgeRequest(req, res) {
+  if (bridgeRateLimited(req)) return bridgeJson(res, 429, { error: 'rate limit exceeded' });
+  if (!bridgeAuthorized(req)) return bridgeJson(res, 401, { error: 'unauthorized' });
+
+  const url = new URL(req.url, 'http://127.0.0.1');
+  if (req.method === 'GET' && url.pathname === '/v1/health') {
+    return bridgeJson(res, 200, { ok: true, app: APP_NAME });
+  }
+  if (req.method === 'GET' && url.pathname === '/v1/pet/state') {
+    const bounds = petWindow && !petWindow.isDestroyed() ? petWindow.getBounds() : null;
+    return bridgeJson(res, 200, {
+      app: APP_NAME,
+      visible: !!(petWindow && !petWindow.isDestroyed() && petWindow.isVisible()),
+      actionId: petActionId,
+      actions: Object.keys(HAS_ACTION),
+      bounds,
+    });
+  }
+  if (req.method !== 'POST') return bridgeJson(res, 405, { error: 'method not allowed' });
+
+  let body;
+  try { body = await bridgeReadBody(req); } catch (e) {
+    if (!res.headersSent && !res.destroyed) bridgeJson(res, 400, { error: e.message });
+    return;
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return bridgeJson(res, 400, { error: 'JSON object required' });
+  }
+
+  if (url.pathname === '/v1/pet/action') {
+    const actionId = String(body.actionId || '');
+    if (!HAS_ACTION[actionId]) return bridgeJson(res, 400, { error: 'unknown actionId' });
+    if (!petWindow || petWindow.isDestroyed()) return bridgeJson(res, 503, { error: 'pet window is unavailable' });
+    petWindow.webContents.send('switch-action', actionId);
+    return bridgeJson(res, 200, { ok: true, actionId: actionId });
+  }
+  if (url.pathname === '/v1/pet/say') {
+    const text = String(body.text || '').trim();
+    if (!text) return bridgeJson(res, 400, { error: 'text is required' });
+    if (text.length > 500) return bridgeJson(res, 400, { error: 'text cannot exceed 500 characters' });
+    if (!petWindow || petWindow.isDestroyed()) return bridgeJson(res, 503, { error: 'pet window is unavailable' });
+    const event = { type: 'say', text: text };
+    if (body.actionId != null) {
+      const actionId = String(body.actionId);
+      if (!HAS_ACTION[actionId]) return bridgeJson(res, 400, { error: 'unknown actionId' });
+      event.actionId = actionId;
+    }
+    sendPetEvent(event);
+    return bridgeJson(res, 200, { ok: true });
+  }
+  if (url.pathname === '/v1/chat') {
+    try { return bridgeJson(res, 200, await bridgeChat(body)); }
+    catch (e) { return bridgeJson(res, 502, { error: String(e && e.message ? e.message : e) }); }
+  }
+  return bridgeJson(res, 404, { error: 'not found' });
+}
+
+function startBridge() {
+  if (!bridgeToken) {
+    console.log('[bridge] disabled; set ISLA_BRIDGE_TOKEN to enable the local API');
+    return;
+  }
+  if (Buffer.byteLength(bridgeToken) < 32) {
+    console.error('[bridge] ISLA_BRIDGE_TOKEN must contain at least 32 bytes');
+    return;
+  }
+  if (!Number.isInteger(bridgePort) || bridgePort < 1024 || bridgePort > 65535) {
+    console.error('[bridge] invalid ISLA_BRIDGE_PORT; expected 1024..65535');
+    return;
+  }
+  bridgeServer = http.createServer(function (req, res) {
+    handleBridgeRequest(req, res).catch(function (e) {
+      if (!res.headersSent && !res.destroyed) bridgeJson(res, 500, { error: 'internal error' });
+      logError('bridge-request', e);
+    });
+  });
+  bridgeServer.on('error', function (e) { logError('bridge-server', e); });
+  bridgeServer.listen(bridgePort, '127.0.0.1', function () {
+    console.log('[bridge] listening on http://127.0.0.1:' + bridgePort);
+  });
+}
 
 // ---- 实时日期天气（date-weather 动作播报用）----
 // 主进程拉取：ip-api.com 定位 + open-meteo.com 取当前天气（都无需 key），
@@ -608,6 +818,7 @@ app.whenReady().then(function () {
     createWindow();
     logStep('window-created');
     createTray();
+    startBridge();
     initInputCapture();
     registerShortcuts();
     logStep('startup-complete');
@@ -632,6 +843,10 @@ app.on('before-quit', function () {
     } catch (e) { /* ignore */ }
   });
   globalShortcut.unregisterAll();
+  if (bridgeServer) {
+    try { bridgeServer.close(); } catch (e) { /* ignore */ }
+    bridgeServer = null;
+  }
   if (pendingSettingsSave) {
     clearTimeout(pendingSettingsSave);
     pendingSettingsSave = null;

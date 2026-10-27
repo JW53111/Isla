@@ -100,7 +100,7 @@ function generatePackageJson(appName: string, appId: string) {
       appId,
       productName: appName,
       directories: { output: 'dist' },
-      files: ['main.js', 'runtime.js', 'preload.js', 'renderer/**/*', 'sprites/**/*', 'assets/icon.png', 'assets/icon.ico', 'assets/icon.icns'],
+      files: ['main.js', 'runtime.js', 'API.md', 'preload.js', 'renderer/**/*', 'sprites/**/*', 'assets/icon.png', 'assets/icon.ico', 'assets/icon.icns'],
       asarUnpack: ['node_modules/uiohook-napi/**'],
       npmRebuild: false,
       mac: { target: ['dmg'], icon: 'assets/icon.icns', category: 'public.app-category.entertainment' },
@@ -310,6 +310,7 @@ async function main() {
 
   await fs.copyFile(path.join(projectRoot, 'preload.js'), path.join(exportDir, 'preload.js'));
   await fs.copyFile(path.join(projectRoot, 'runtime.js'), path.join(exportDir, 'runtime.js'));
+  await copyIfExists(path.join(projectRoot, 'API.md'), path.join(exportDir, 'API.md'));
   for (const f of ['index.html', 'style.css', 'sprite-engine.js', 'app.js', 'chat.html', 'chat.css', 'chat.js']) {
     await copyIfExists(path.join(projectRoot, 'renderer', f), path.join(exportDir, 'renderer', f));
   }

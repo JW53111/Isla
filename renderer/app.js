@@ -29,6 +29,17 @@ let isDragging = false;
 let hasDragged = false;
 let dragStartX = 0;
 let dragStartY = 0;
+let dragLastAt = 0;
+let dragVelocityX = 0;
+let dragVelocityY = 0;
+let tossVelocityX = 0;
+let tossVelocityY = 0;
+let tossMovePending = false;
+let tossGeneration = 0;
+const TOSS_MIN_SPEED = 260;       // px/s; slow releases stay exactly where dropped
+const TOSS_MAX_SPEED = 1500;      // px/s; avoids a single pointer jump launching Isla far away
+const TOSS_FRICTION = 3.8;        // exponential velocity decay per second
+const TOSS_STOP_SPEED = 24;       // px/s
 
 // Click / double-click handling
 let clickTimer = null;
@@ -47,6 +58,7 @@ let lastSulkAt = 0;
 // 日期天气播报：切到 date-weather 时拉实时天气（主进程缓存 10 分钟）
 let weatherInfo = null;
 let weatherFetchAt = 0;
+let speechBubble = null;
 
 // Head-poke streak
 let pokeStreak = 0;
@@ -82,6 +94,13 @@ function applyDisplaySize() {
 
 function markInteraction() {
   lastInteractionAt = Date.now();
+}
+
+function stopToss() {
+  tossVelocityX = 0;
+  tossVelocityY = 0;
+  tossMovePending = false;
+  tossGeneration += 1;
 }
 
 // 眼神跟随：把「鼠标相对窗口中心」的偏移归一化为注视方向（|v|<=1），
@@ -191,6 +210,10 @@ async function init() {
     // AI 事件：番茄钟完成等 → 切「消息提醒」动作
     api.onPetEvent((ev) => {
       if (!ev) return;
+      if (ev.type === 'say' && String(ev.text || '').trim()) {
+        speechBubble = { text: String(ev.text).trim().slice(0, 500), expiresAt: Date.now() + 8000 };
+        if (ev.actionId && ACTIONS[ev.actionId]) switchAction(ev.actionId, false);
+      }
       if (ev.type === 'pomodoro-done' && ACTIONS['new-message']) {
         markInteraction();
         switchAction('new-message', true);
@@ -256,11 +279,16 @@ async function init() {
 
   // Mouse drag — move window
   canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
     markInteraction();
+    stopToss();
     isDragging = true;
     hasDragged = false;
     dragStartX = e.screenX;
     dragStartY = e.screenY;
+    dragLastAt = e.timeStamp;
+    dragVelocityX = 0;
+    dragVelocityY = 0;
   });
 
   window.addEventListener('mousemove', (e) => {
@@ -269,16 +297,30 @@ async function init() {
     const dy = e.screenY - dragStartY;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
       hasDragged = true;
+      const elapsed = Math.max(8, e.timeStamp - dragLastAt);
+      const instantVx = (dx / elapsed) * 1000;
+      const instantVy = (dy / elapsed) * 1000;
+      // Smooth pointer jitter while preserving a quick flick at release.
+      dragVelocityX = dragVelocityX * 0.45 + instantVx * 0.55;
+      dragVelocityY = dragVelocityY * 0.45 + instantVy * 0.55;
       if (api) {
         api.moveWindow(dx, dy);
       }
       dragStartX = e.screenX;
       dragStartY = e.screenY;
+      dragLastAt = e.timeStamp;
     }
   });
 
   window.addEventListener('mouseup', () => {
+    if (!isDragging) return;
     isDragging = false;
+    const speed = Math.hypot(dragVelocityX, dragVelocityY);
+    if (hasDragged && api && speed >= TOSS_MIN_SPEED) {
+      const scale = Math.min(1, TOSS_MAX_SPEED / speed);
+      tossVelocityX = dragVelocityX * scale;
+      tossVelocityY = dragVelocityY * scale;
+    }
   });
 }
 
@@ -288,6 +330,32 @@ function gameLoop(timestamp) {
   lastTimestamp = timestamp;
 
   engine.update(dt);
+
+  // A quick release throws Isla with momentum. The main process reports work-area
+  // collisions so she can bounce off the edges, then friction settles her gently.
+  if (tossVelocityX || tossVelocityY) {
+    if (isDragging || !api || !api.moveWindowWithCollision) {
+      stopToss();
+    } else if (!tossMovePending) {
+      tossMovePending = true;
+      const generation = tossGeneration;
+      api.moveWindowWithCollision((tossVelocityX * dt) / 1000, (tossVelocityY * dt) / 1000)
+        .then((collision) => {
+          if (generation !== tossGeneration) return;
+          if (!collision) return;
+          if (collision.hitX) tossVelocityX *= -0.58;
+          if (collision.hitY) tossVelocityY *= -0.38;
+        })
+        .catch(() => { if (generation === tossGeneration) stopToss(); })
+        .finally(() => {
+          if (generation === tossGeneration) tossMovePending = false;
+        });
+      const decay = Math.exp(-TOSS_FRICTION * dt / 1000);
+      tossVelocityX *= decay;
+      tossVelocityY *= decay;
+      if (Math.hypot(tossVelocityX, tossVelocityY) < TOSS_STOP_SPEED) stopToss();
+    }
+  }
 
   // Auto-sleep: long time without interaction while resting
   if (currentActionId === DEFAULT_ACTION_ID && Date.now() - lastInteractionAt > AUTO_SLEEP_MS) {
@@ -348,6 +416,7 @@ function gameLoop(timestamp) {
 
   // 实时日期天气气泡（date-weather 动作时头顶显示）
   if (currentActionId === 'date-weather') renderWeatherBubble();
+  if (speechBubble) renderSpeechBubble();
 
   // Non-looping action completed → transition
   if (!engine.isPlaying && engine.currentAction) {
@@ -362,13 +431,69 @@ function switchAction(actionId, userTriggered = false) {
   const action = ACTIONS[actionId];
   if (!action) return;
 
+  stopToss();
   currentActionId = actionId;
+  api?.reportAction?.(actionId);
   isUserTriggered = userTriggered;
   if (actionId !== DEFAULT_ACTION_ID) drifting = false;
   if (actionId === 'date-weather') requestWeather();
   engine.play(actionId);
   // Window size is STAGE-based and fixed across actions — no resize here
   // (keeps the existing "no jumping when switching actions" behavior)
+}
+
+function renderSpeechBubble() {
+  if (Date.now() >= speechBubble.expiresAt) {
+    speechBubble = null;
+    return;
+  }
+  const d = engine.drawInfo;
+  if (!d || !engine.loadedActionId) return;
+  const ctx = engine.ctx;
+  const scale = d.scale || 1;
+  const maxWidth = Math.min(canvas.width * 0.84, 250 * scale);
+  const padX = 9 * scale;
+  const fontSize = Math.max(9, 12 * scale);
+  const lineHeight = fontSize * 1.35;
+  ctx.save();
+  ctx.font = fontSize + 'px "Microsoft YaHei", "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const lines = [];
+  let line = '';
+  const text = speechBubble.text.replace(/\s+/g, ' ').trim();
+  if (!text) { ctx.restore(); return; }
+  for (const char of text) {
+    const candidate = line + char;
+    if (line && ctx.measureText(candidate).width > maxWidth - padX * 2) {
+      lines.push(line);
+      line = char;
+      if (lines.length === 2) break;
+    } else line = candidate;
+  }
+  if (lines.length < 3 && line) lines.push(line);
+  if (lines.length > 3) lines.length = 3;
+  if (text.length > lines.join('').length && lines.length) {
+    const last = lines.length - 1;
+    while (lines[last] && ctx.measureText(lines[last] + '…').width > maxWidth - padX * 2) {
+      lines[last] = lines[last].slice(0, -1);
+    }
+    lines[last] += '…';
+  }
+  const width = Math.min(maxWidth, Math.max(...lines.map((item) => ctx.measureText(item).width)) + padX * 2);
+  const height = lines.length * lineHeight + 12 * scale;
+  const headTop = d.dy + ((d.eyeY != null ? d.eyeY : 110) - 38) * scale;
+  const x = d.cx - width / 2;
+  const y = Math.max(2, headTop - height - 9 * scale);
+  engine.roundRect(ctx, x, y, width, height, 8 * scale);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(80, 80, 80, 0.35)';
+  ctx.lineWidth = Math.max(1, scale);
+  ctx.stroke();
+  ctx.fillStyle = '#34343a';
+  lines.forEach((item, index) => ctx.fillText(item, d.cx, y + height / 2 + (index - (lines.length - 1) / 2) * lineHeight));
+  ctx.restore();
 }
 
 // Handle action completion

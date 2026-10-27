@@ -5,7 +5,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showContextMenu: (currentActionId) => ipcRenderer.send('show-context-menu', currentActionId),
   resizeWindow: (width, height) => ipcRenderer.send('resize-window', width, height),
   moveWindow: (dx, dy, opts) => ipcRenderer.send('move-window', dx, dy, opts || {}),
+  moveWindowWithCollision: (dx, dy) => ipcRenderer.invoke('move-window-with-collision', dx, dy),
   getDisplayConfig: () => ipcRenderer.invoke('get-display-config'),
+  reportAction: (actionId) => ipcRenderer.send('pet-action-state', actionId),
 
   // 设置（userData/settings.json，主进程为权威）
   getSettings: () => ipcRenderer.invoke('settings-get'),
